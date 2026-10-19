@@ -113,8 +113,7 @@ This is an academic project developed for educational purposes.
 
 ## Author
 
-Developed as a solo final-year B.Tech Computer Science major project.
-
+Developed as a group final-year B.Tech Computer Science and Engineering major project.
 ---
 
 **Status**: Phase 1 - Foundation setup in progress
