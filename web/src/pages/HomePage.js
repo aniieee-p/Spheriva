@@ -1,4 +1,3 @@
-import React from 'react';
 
 const HomePage = () => {
   return (
@@ -9,7 +8,7 @@ const HomePage = () => {
             Spheriva
           </h1>
           <p className="text-xl text-gray-600 mb-8">
-            Trusted Circle Dashboard
+            Trusted Circle Dashboard..
           </p>
           
           <div className="bg-primary-50 rounded-lg p-6 mb-8">
