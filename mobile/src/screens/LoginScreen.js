@@ -12,21 +12,26 @@ import {
   ScrollView,
 } from 'react-native';
 import { useAuth } from '../context/AuthContext';
+import { validateEmailOrPhone, validatePassword } from '../utils/validation';
 
 const LoginScreen = ({ navigation }) => {
   const [emailOrPhone, setEmailOrPhone] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
+  const [errors, setErrors] = useState({});
   const { login } = useAuth();
 
   const handleLogin = async () => {
-    if (!emailOrPhone || !password) {
-      Alert.alert('Error', 'Please fill in all fields');
-      return;
-    }
+    const newErrors = {
+      emailOrPhone: validateEmailOrPhone(emailOrPhone),
+      password: validatePassword(password),
+    };
+    setErrors(newErrors);
+
+    if (newErrors.emailOrPhone || newErrors.password) return;
 
     setLoading(true);
-    const result = await login(emailOrPhone, password);
+    const result = await login(emailOrPhone.trim(), password);
     setLoading(false);
 
     if (!result.success) {
@@ -39,7 +44,10 @@ const LoginScreen = ({ navigation }) => {
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       style={styles.container}
     >
-      <ScrollView contentContainerStyle={styles.scrollContent}>
+      <ScrollView
+        contentContainerStyle={styles.scrollContent}
+        keyboardShouldPersistTaps="handled"
+      >
         <View style={styles.header}>
           <Text style={styles.title}>Spheriva</Text>
           <Text style={styles.subtitle}>Your Personal Safety Companion</Text>
@@ -48,22 +56,34 @@ const LoginScreen = ({ navigation }) => {
         <View style={styles.form}>
           <Text style={styles.label}>Email or Phone Number</Text>
           <TextInput
-            style={styles.input}
+            style={[styles.input, errors.emailOrPhone && styles.inputError]}
             placeholder="Enter email or phone"
             value={emailOrPhone}
-            onChangeText={setEmailOrPhone}
+            onChangeText={(text) => {
+              setEmailOrPhone(text);
+              if (errors.emailOrPhone) setErrors({ ...errors, emailOrPhone: '' });
+            }}
             autoCapitalize="none"
             keyboardType="email-address"
           />
+          {!!errors.emailOrPhone && (
+            <Text style={styles.errorText}>{errors.emailOrPhone}</Text>
+          )}
 
           <Text style={styles.label}>Password</Text>
           <TextInput
-            style={styles.input}
+            style={[styles.input, errors.password && styles.inputError]}
             placeholder="Enter password"
             value={password}
-            onChangeText={setPassword}
+            onChangeText={(text) => {
+              setPassword(text);
+              if (errors.password) setErrors({ ...errors, password: '' });
+            }}
             secureTextEntry
           />
+          {!!errors.password && (
+            <Text style={styles.errorText}>{errors.password}</Text>
+          )}
 
           <TouchableOpacity
             style={styles.button}
@@ -132,6 +152,15 @@ const styles = StyleSheet.create({
     marginBottom: 20,
     borderWidth: 1,
     borderColor: '#e0e0e0',
+  },
+  inputError: {
+    borderColor: '#EF4444',
+  },
+  errorText: {
+    color: '#EF4444',
+    fontSize: 13,
+    marginTop: -14,
+    marginBottom: 14,
   },
   button: {
     backgroundColor: '#6366F1',
