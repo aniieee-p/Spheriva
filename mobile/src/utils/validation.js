@@ -30,3 +30,15 @@ export const isValidEmail = (value) =>
     if (password !== confirm) return 'Passwords do not match';
     return '';
   };
+
+  export const validateEmail = (value) => {
+    if (!value.trim()) return 'Email is required';
+    if (!isValidEmail(value)) return 'Enter a valid email address';
+    return '';
+  };
+  
+  export const validatePhone = (value) => {
+    if (!value.trim()) return 'Phone number is required';
+    if (!isValidPhone(value)) return 'Enter a valid 10-digit phone number';
+    return '';
+  };
