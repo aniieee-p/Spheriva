@@ -2,11 +2,11 @@ import React from 'react';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { useAuth } from '../context/AuthContext';
 import { ActivityIndicator, View, StyleSheet } from 'react-native';
+import MainTabs from './MainTabs';
 
 // Screens
 import LoginScreen from '../screens/LoginScreen';
 import RegisterScreen from '../screens/RegisterScreen';
-import HomeScreen from '../screens/HomeScreen';
 
 const Stack = createNativeStackNavigator();
 
@@ -35,25 +35,24 @@ const AppNavigator = () => {
     >
       {!isAuthenticated ? (
         <>
-          <Stack.Screen 
-            name="Login" 
+          <Stack.Screen
+            name="Login"
             component={LoginScreen}
             options={{ headerShown: false }}
           />
-          <Stack.Screen 
-            name="Register" 
+
+          <Stack.Screen
+            name="Register"
             component={RegisterScreen}
             options={{ title: 'Create Account' }}
           />
         </>
       ) : (
-        <>
-          <Stack.Screen 
-            name="Home" 
-            component={HomeScreen}
-            options={{ title: 'Spheriva' }}
-          />
-        </>
+        <Stack.Screen
+          name="MainTabs"
+          component={MainTabs}
+          options={{ headerShown: false }}
+        />
       )}
     </Stack.Navigator>
   );
