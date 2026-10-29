@@ -7,6 +7,7 @@ import MainTabs from './MainTabs';
 // Screens
 import LoginScreen from '../screens/LoginScreen';
 import RegisterScreen from '../screens/RegisterScreen';
+import WelcomeScreen from '../screens/WelcomeScreen';
 
 const Stack = createNativeStackNavigator();
 
@@ -35,6 +36,12 @@ const AppNavigator = () => {
     >
       {!isAuthenticated ? (
         <>
+
+        <Stack.Screen
+          name="Welcome"
+          component={WelcomeScreen}
+           options={{ headerShown: false }}
+         />
           <Stack.Screen
             name="Login"
             component={LoginScreen}
