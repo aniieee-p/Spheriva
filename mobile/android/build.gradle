@@ -6,6 +6,10 @@ buildscript {
         targetSdkVersion = 36
         // ndkVersion - using default (28.2.13676358)
         kotlinVersion = "2.2.0"
+        
+        // Background Geolocation library versions
+        playServicesLocationVersion = "21.3.0"
+        tslocationmanagerVersion = "4.7.+"
     }
     repositories {
         google()
