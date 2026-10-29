@@ -12,39 +12,50 @@ import {
   ScrollView,
 } from 'react-native';
 import { useAuth } from '../context/AuthContext';
+import {
+  validateName,
+  validateEmail,
+  validatePhone,
+  validatePassword,
+  validateConfirmPassword,
+} from '../utils/validation';
 
 const RegisterScreen = ({ navigation }) => {
-  const [name, setName] = useState('');
-  const [email, setEmail] = useState('');
-  const [phoneNumber, setPhoneNumber] = useState('');
-  const [password, setPassword] = useState('');
-  const [confirmPassword, setConfirmPassword] = useState('');
+  const [form, setForm] = useState({
+    name: '',
+    email: '',
+    phoneNumber: '',
+    password: '',
+    confirmPassword: '',
+  });
+  const [errors, setErrors] = useState({});
   const [loading, setLoading] = useState(false);
   const { register } = useAuth();
 
+  const updateField = (field, value) => {
+    setForm({ ...form, [field]: value });
+    if (errors[field]) setErrors({ ...errors, [field]: '' });
+  };
+
   const handleRegister = async () => {
-    if (!name || !email || !phoneNumber || !password || !confirmPassword) {
-      Alert.alert('Error', 'Please fill in all fields');
-      return;
-    }
+    const newErrors = {
+      name: validateName(form.name),
+      email: validateEmail(form.email),
+      phoneNumber: validatePhone(form.phoneNumber),
+      password: validatePassword(form.password),
+      confirmPassword: validateConfirmPassword(form.password, form.confirmPassword),
+    };
+    setErrors(newErrors);
 
-    if (password !== confirmPassword) {
-      Alert.alert('Error', 'Passwords do not match');
-      return;
-    }
-
-    if (password.length < 6) {
-      Alert.alert('Error', 'Password must be at least 6 characters');
-      return;
-    }
-
-    if (!/^[6-9]\d{9}$/.test(phoneNumber)) {
-      Alert.alert('Error', 'Please enter a valid 10-digit Indian phone number');
-      return;
-    }
+    if (Object.values(newErrors).some(Boolean)) return;
 
     setLoading(true);
-    const result = await register(name, email, phoneNumber, password);
+    const result = await register(
+      form.name.trim(),
+      form.email.trim(),
+      form.phoneNumber.trim(),
+      form.password
+    );
     setLoading(false);
 
     if (!result.success) {
@@ -52,58 +63,69 @@ const RegisterScreen = ({ navigation }) => {
     }
   };
 
+  const renderError = (field) =>
+    !!errors[field] && <Text style={styles.errorText}>{errors[field]}</Text>;
+
   return (
     <KeyboardAvoidingView
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       style={styles.container}
     >
-      <ScrollView contentContainerStyle={styles.scrollContent}>
+      <ScrollView
+        contentContainerStyle={styles.scrollContent}
+        keyboardShouldPersistTaps="handled"
+      >
         <View style={styles.form}>
           <Text style={styles.label}>Full Name</Text>
           <TextInput
-            style={styles.input}
+            style={[styles.input, errors.name && styles.inputError]}
             placeholder="Enter your full name"
-            value={name}
-            onChangeText={setName}
+            value={form.name}
+            onChangeText={(text) => updateField('name', text)}
           />
+          {renderError('name')}
 
           <Text style={styles.label}>Email</Text>
           <TextInput
-            style={styles.input}
+            style={[styles.input, errors.email && styles.inputError]}
             placeholder="Enter your email"
-            value={email}
-            onChangeText={setEmail}
+            value={form.email}
+            onChangeText={(text) => updateField('email', text)}
             autoCapitalize="none"
             keyboardType="email-address"
           />
+          {renderError('email')}
 
           <Text style={styles.label}>Phone Number</Text>
           <TextInput
-            style={styles.input}
+            style={[styles.input, errors.phoneNumber && styles.inputError]}
             placeholder="10-digit number (e.g., 9876543210)"
-            value={phoneNumber}
-            onChangeText={setPhoneNumber}
+            value={form.phoneNumber}
+            onChangeText={(text) => updateField('phoneNumber', text)}
             keyboardType="phone-pad"
             maxLength={10}
           />
+          {renderError('phoneNumber')}
 
           <Text style={styles.label}>Password</Text>
           <TextInput
-            style={styles.input}
+            style={[styles.input, errors.password && styles.inputError]}
             placeholder="At least 6 characters"
-            value={password}
-            onChangeText={setPassword}
+            value={form.password}
+            onChangeText={(text) => updateField('password', text)}
             secureTextEntry
           />
+          {renderError('password')}
 
           <Text style={styles.label}>Confirm Password</Text>
           <TextInput
-            style={styles.input}
+            style={[styles.input, errors.confirmPassword && styles.inputError]}
             placeholder="Re-enter password"
-            value={confirmPassword}
-            onChangeText={setConfirmPassword}
+            value={form.confirmPassword}
+            onChangeText={(text) => updateField('confirmPassword', text)}
             secureTextEntry
           />
+          {renderError('confirmPassword')}
 
           <TouchableOpacity
             style={styles.button}
@@ -157,6 +179,15 @@ const styles = StyleSheet.create({
     marginBottom: 20,
     borderWidth: 1,
     borderColor: '#e0e0e0',
+  },
+  inputError: {
+    borderColor: '#EF4444',
+  },
+  errorText: {
+    color: '#EF4444',
+    fontSize: 13,
+    marginTop: -14,
+    marginBottom: 14,
   },
   button: {
     backgroundColor: '#6366F1',
