@@ -1,0 +1,8 @@
+{
+  "appId": "com.spheriva.app",
+  "appName": "Spheriva",
+  "webDir": "dist",
+  "android": {
+    "useLegacyBridge": true
+  }
+}

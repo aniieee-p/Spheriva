@@ -1,0 +1,11 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Spheriva</string>
+    <string name="title_activity_main">Spheriva</string>
+    <string name="package_name">com.spheriva.app</string>
+    <string name="custom_url_scheme">com.spheriva.app</string>
+    
+    <!-- Background Geolocation Plugin Configuration -->
+    <string name="capacitor_background_geolocation_notification_channel_name">Safety Tracking</string>
+    <string name="capacitor_background_geolocation_notification_icon">mipmap/ic_launcher</string>
+</resources>
