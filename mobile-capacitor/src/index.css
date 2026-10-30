@@ -15,3 +15,181 @@ body {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
+
+/* ---------- Welcome screen ---------- */
+.welcome-root {
+  position: relative;
+  min-height: 100vh;
+  min-height: 100dvh;
+  display: flex;
+  justify-content: center;
+  overflow: hidden;
+  background: #0b1030;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  outline: none;
+}
+
+/* Portrait image ke dono taraf blur (jab window 9:16 se chauri ho) */
+.welcome-root::before {
+  content: '';
+  position: absolute;
+  inset: -40px;
+  background: url('./assets/welcome.png') center / cover no-repeat;
+  filter: blur(28px) brightness(0.5);
+}
+
+/* 9:16 phone jaisa stage, phone par ye poori screen bharta hai */
+.welcome-stage {
+  position: relative;
+  width: min(100vw, 56.25vh);
+  width: min(100vw, 56.25dvh);
+  height: 100vh;
+  height: 100dvh;
+  overflow: hidden;
+  --ring: calc(56.25vh * 0.96);
+  --ring: calc(56.25dvh * 0.96);
+  --ring-inner: calc(var(--ring) * 0.73);
+}
+
+.welcome-bg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center;
+  animation: welcomeFade 0.9s ease-out both;
+}
+
+.welcome-shade {
+  display: none;
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(to top, rgba(8, 10, 40, 0.7) 0%, rgba(8, 10, 40, 0) 45%);
+}
+
+.neon-orbit {
+  display: none;
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  animation: welcomeFade 1.2s ease-out both;
+}
+
+.neon-ring-area {
+  position: absolute;
+  left: 50%;
+  top: 49%;
+  width: 0;
+  height: 0;
+  pointer-events: none;
+  animation: welcomeFade 1.2s ease-out both;
+}
+
+.neon-ring-outer,
+.neon-ring-inner {
+  position: absolute;
+  border-radius: 50%;
+}
+
+.neon-ring-outer {
+  width: var(--ring);
+  height: var(--ring);
+  margin: calc(var(--ring) / -2) 0 0 calc(var(--ring) / -2);
+  border: 1.5px solid rgba(147, 197, 253, 0.45);
+  animation: spinCw 12s linear infinite;
+}
+
+.neon-ring-inner {
+  width: var(--ring-inner);
+  height: var(--ring-inner);
+  margin: calc(var(--ring-inner) / -2) 0 0 calc(var(--ring-inner) / -2);
+  border: 1.5px dashed rgba(251, 191, 150, 0.55);
+  animation: spinCcw 12s linear infinite;
+}
+
+.neon-dot-wrap {
+  position: absolute;
+  inset: 0;
+}
+
+.neon-dot {
+  position: absolute;
+  top: -5px;
+  left: 50%;
+  width: 10px;
+  height: 10px;
+  margin-left: -5px;
+  border-radius: 50%;
+  background: var(--c);
+  box-shadow: 0 0 10px 4px var(--c);
+}
+
+.welcome-bottom {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(60px + env(safe-area-inset-bottom));
+  text-align: center;
+  color: #fff;
+  animation: welcomeFade 1.2s ease-out both;
+}
+
+.welcome-title {
+  font-size: 38px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.6);
+}
+
+.welcome-subtitle {
+  margin-top: 6px;
+  font-size: 15px;
+  color: #e0e7ff;
+  text-shadow: 0 1px 6px rgba(0, 0, 0, 0.6);
+}
+
+.welcome-tap {
+  display: inline-block;
+  margin-top: 26px;
+  font-size: 14px;
+  letter-spacing: 0.5px;
+  animation: tapPulse 2.2s ease-in-out infinite;
+}
+
+/* Laptop / tablet (chauri window): wide image poori screen par */
+@media (min-aspect-ratio: 1/1) {
+  .welcome-root::before { display: none; }
+  .welcome-stage { width: 100vw; }
+  .neon-ring-area { display: none; }
+  .neon-orbit { display: block; }
+  .welcome-shade { display: block; }
+  .welcome-bottom { bottom: 48px; }
+  .welcome-title { font-size: 52px; }
+  .welcome-subtitle { font-size: 18px; }
+}
+
+@keyframes spinCw {
+  to { transform: rotate(360deg); }
+}
+@keyframes spinCcw {
+  to { transform: rotate(-360deg); }
+}
+@keyframes tapPulse {
+  0%, 100% { opacity: 0.45; }
+  50% { opacity: 1; }
+}
+@keyframes welcomeFade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .neon-ring-outer,
+  .neon-ring-inner,
+  .welcome-tap { animation: none; }
+}
