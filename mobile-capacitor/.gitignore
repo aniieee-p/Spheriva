@@ -34,10 +34,6 @@ android/app/.cxx/
 android/build/
 android/.gradle/
 android/local.properties
-android/gradle.properties
-android/gradlew
-android/gradlew.bat
-android/gradle/
 
 # NPM audit reports
 audit-report.json
