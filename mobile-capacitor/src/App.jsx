@@ -6,6 +6,7 @@ import WelcomeScreen from './screens/WelcomeScreen';
 import LoginScreen from './screens/LoginScreen';
 import RegisterScreen from './screens/RegisterScreen';
 import HomeScreen from './screens/HomeScreen';
+import TrustedContactsScreen from './screens/TrustedContactsScreen';
 
 function App() {
   return (
@@ -23,6 +24,15 @@ function App() {
             element={
               <ProtectedRoute>
                 <HomeScreen />
+              </ProtectedRoute>
+            }
+          />
+
+          <Route
+            path="/contacts"
+            element={
+              <ProtectedRoute>
+                <TrustedContactsScreen />
               </ProtectedRoute>
             }
           />
