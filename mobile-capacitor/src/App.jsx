@@ -6,6 +6,8 @@ import WelcomeScreen from './screens/WelcomeScreen';
 import LoginScreen from './screens/LoginScreen';
 import RegisterScreen from './screens/RegisterScreen';
 import HomeScreen from './screens/HomeScreen';
+import ProfileScreen from './screens/ProfileScreen';
+import AppLayout from './components/AppLayout';
 
 function App() {
   return (
@@ -17,15 +19,17 @@ function App() {
           <Route path="/login" element={<LoginScreen />} />
           <Route path="/register" element={<RegisterScreen />} />
 
-          {/* Protected Routes */}
+          {/* Protected Routes (share the bottom navigation layout) */}
           <Route
-            path="/home"
             element={
               <ProtectedRoute>
-                <HomeScreen />
+                <AppLayout />
               </ProtectedRoute>
             }
-          />
+          >
+            <Route path="/home" element={<HomeScreen />} />
+            <Route path="/profile" element={<ProfileScreen />} />
+          </Route>
 
           {/* Anything else goes to the welcome screen */}
           <Route path="*" element={<Navigate to="/" replace />} />
