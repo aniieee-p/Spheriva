@@ -127,6 +127,19 @@ export const apiService = {
   addEmergencyContact: async (contactData) => {
     return await apiClient.post(API_CONFIG.ENDPOINTS.EMERGENCY.CONTACTS, contactData);
   },
+
+  updateEmergencyContact: async (contactId, contactData) => {
+    return await apiClient.put(
+      `${API_CONFIG.ENDPOINTS.EMERGENCY.CONTACTS}/${contactId}`,
+      contactData
+    );
+  },
+
+  deleteEmergencyContact: async (contactId) => {
+    return await apiClient.delete(
+      `${API_CONFIG.ENDPOINTS.EMERGENCY.CONTACTS}/${contactId}`
+    );
+  },
 };
 
 export default apiService;
