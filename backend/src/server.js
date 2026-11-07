@@ -24,6 +24,7 @@ app.get('/health', (req, res) => {
 
 // API Routes (will be added in subsequent phases)
 app.use('/api/auth', require('./routes/auth.routes'));
+app.use('/api/emergency/contacts', require('./routes/contact.routes'));
 
 // Error handling middleware
 app.use((err, req, res, next) => {
