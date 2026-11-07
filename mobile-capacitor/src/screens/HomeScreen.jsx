@@ -3,17 +3,128 @@
  * Main dashboard after login - shows safety session controls
  */
 
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import { startSafetySession, stopSafetySession, getSafetySessionStatus } from '../services/trackingService';
 
 const HomeScreen = () => {
   const navigate = useNavigate();
   const { user, logout } = useAuth();
 
+  // Session state
+  const [sessionActive, setSessionActive] = useState(false);
+  const [sessionId, setSessionId] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+  const [successMessage, setSuccessMessage] = useState(null);
+
+  // Check for active session on mount and when component becomes visible
+  useEffect(() => {
+    const checkSessionStatus = () => {
+      const status = getSafetySessionStatus();
+      const isActive = status.sessionState === 'active';
+      setSessionActive(isActive);
+      if (isActive) {
+        setSessionId(status.activeSessionId);
+      } else {
+        setSessionId(null);
+      }
+    };
+
+    // Check on mount
+    checkSessionStatus();
+
+    // Check when returning to this screen (optional: add visibility listener)
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        checkSessionStatus();
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, []);
+
   const handleLogout = async () => {
     await logout();
     navigate('/login');
+  };
+
+  const handleStartSession = async () => {
+    setLoading(true);
+    setError(null);
+    setSuccessMessage(null);
+
+    try {
+      const result = await startSafetySession({
+        backgroundMessage: `${user?.name || 'User'} is being tracked for safety`,
+        backgroundTitle: 'Spheriva Safety Session Active',
+        distanceFilter: 10 // Update every 10 meters
+      });
+
+      if (result.success) {
+        setSessionActive(true);
+        setSessionId(result.sessionId);
+        setSuccessMessage('Safety session started successfully!');
+        setTimeout(() => setSuccessMessage(null), 3000);
+      } else {
+        // Handle specific error reasons
+        let errorMsg = 'Failed to start safety session';
+        if (result.reason === 'invalid_options') {
+          errorMsg = 'Invalid session options: ' + result.errors.join(', ');
+        } else if (result.reason === 'location_permission_denied') {
+          errorMsg = 'Location permission is required. Please enable it in Settings.';
+        } else if (result.reason === 'stuck_watcher_exists') {
+          errorMsg = 'Previous session cleanup required. Please try again.';
+        } else if (result.reason === 'invalid_state') {
+          errorMsg = `Cannot start session in current state: ${result.currentState}`;
+        } else {
+          errorMsg = result.note || result.reason || errorMsg;
+        }
+        setError(errorMsg);
+      }
+    } catch (err) {
+      console.error('Error starting session:', err);
+      setError('Unexpected error: ' + err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleStopSession = async () => {
+    setLoading(true);
+    setError(null);
+    setSuccessMessage(null);
+
+    try {
+      const result = await stopSafetySession();
+
+      if (result.success) {
+        setSessionActive(false);
+        setSessionId(null);
+        setSuccessMessage('Safety session stopped successfully!');
+        setTimeout(() => setSuccessMessage(null), 3000);
+      } else {
+        let errorMsg = 'Failed to stop safety session';
+        if (result.reason === 'invalid_state') {
+          errorMsg = `Cannot stop session in current state: ${result.currentState}`;
+        } else if (result.reason === 'watcher_removal_failed') {
+          errorMsg = 'Session ended but cleanup pending. You can retry or restart the app.';
+        } else {
+          errorMsg = result.note || result.reason || errorMsg;
+        }
+        setError(errorMsg);
+      }
+    } catch (err) {
+      console.error('Error stopping session:', err);
+      setError('Unexpected error: ' + err.message);
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -47,22 +158,85 @@ const HomeScreen = () => {
         {/* Safety Session Card */}
         <div className="bg-white rounded-xl shadow-md p-6 mb-4">
           <h3 className="text-lg font-bold text-gray-800 mb-4">Safety Session</h3>
-          
+
+          {/* Status Messages */}
+          {error && (
+            <div className="mb-4 p-3 bg-red-100 border border-red-400 text-red-700 rounded-lg text-sm">
+              {error}
+            </div>
+          )}
+
+          {successMessage && (
+            <div className="mb-4 p-3 bg-green-100 border border-green-400 text-green-700 rounded-lg text-sm">
+              {successMessage}
+            </div>
+          )}
+
+          {/* Active Session Info */}
+          {sessionActive && (
+            <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+              <div className="flex items-center">
+                <div className="w-3 h-3 bg-green-500 rounded-full animate-pulse mr-2"></div>
+                <p className="text-sm font-medium text-blue-900">
+                  Session Active
+                </p>
+              </div>
+              {sessionId && (
+                <p className="text-xs text-blue-700 mt-1 font-mono">
+                  ID: {sessionId.substring(0, 20)}...
+                </p>
+              )}
+            </div>
+          )}
+
           <div className="space-y-3">
-            {/* Start Session Button */}
-            <button 
-              className="w-full bg-green-600 hover:bg-green-700 text-white py-4 rounded-lg font-semibold transition shadow-lg flex items-center justify-center"
-              onClick={() => alert('Start Session feature coming soon!')}
-            >
-              <svg className="w-6 h-6 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-              </svg>
-              Start Safety Session
-            </button>
+            {/* Start/Stop Session Button */}
+            {!sessionActive ? (
+              <button
+                className="w-full bg-green-600 hover:bg-green-700 disabled:bg-gray-400 disabled:cursor-not-allowed text-white py-4 rounded-lg font-semibold transition shadow-lg flex items-center justify-center"
+                onClick={handleStartSession}
+                disabled={loading}
+              >
+                {loading ? (
+                  <>
+                    <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin mr-2"></div>
+                    Starting Session...
+                  </>
+                ) : (
+                  <>
+                    <svg className="w-6 h-6 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                    Start Safety Session
+                  </>
+                )}
+              </button>
+            ) : (
+              <button
+                className="w-full bg-red-600 hover:bg-red-700 disabled:bg-gray-400 disabled:cursor-not-allowed text-white py-4 rounded-lg font-semibold transition shadow-lg flex items-center justify-center"
+                onClick={handleStopSession}
+                disabled={loading}
+              >
+                {loading ? (
+                  <>
+                    <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin mr-2"></div>
+                    Stopping Session...
+                  </>
+                ) : (
+                  <>
+                    <svg className="w-6 h-6 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 10a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1v-4z" />
+                    </svg>
+                    Stop Safety Session
+                  </>
+                )}
+              </button>
+            )}
 
             {/* Emergency SOS Button */}
-            <button 
+            <button
               className="w-full bg-red-600 hover:bg-red-700 text-white py-4 rounded-lg font-semibold transition shadow-lg flex items-center justify-center"
               onClick={() => alert('Emergency SOS feature coming soon!')}
             >
@@ -77,10 +251,10 @@ const HomeScreen = () => {
         {/* Quick Actions */}
         <div className="bg-white rounded-xl shadow-md p-6">
           <h3 className="text-lg font-bold text-gray-800 mb-4">Quick Actions</h3>
-          
+
           <div className="grid grid-cols-2 gap-3">
             {/* Session History */}
-            <button 
+            <button
               className="bg-blue-50 hover:bg-blue-100 p-4 rounded-lg transition text-center"
               onClick={() => alert('Session History coming soon!')}
             >
@@ -91,7 +265,7 @@ const HomeScreen = () => {
             </button>
 
             {/* Trusted Contacts */}
-            <button 
+            <button
               className="bg-purple-50 hover:bg-purple-100 p-4 rounded-lg transition text-center"
               onClick={() => navigate('/contacts')}
             >
@@ -102,7 +276,7 @@ const HomeScreen = () => {
             </button>
 
             {/* Settings */}
-            <button 
+            <button
               className="bg-gray-50 hover:bg-gray-100 p-4 rounded-lg transition text-center"
               onClick={() => alert('Settings coming soon!')}
             >
@@ -114,7 +288,7 @@ const HomeScreen = () => {
             </button>
 
             {/* Profile */}
-            <button 
+            <button
               className="bg-green-50 hover:bg-green-100 p-4 rounded-lg transition text-center"
               onClick={() => navigate('/profile')}
             >
