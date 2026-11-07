@@ -6,6 +6,7 @@
     <string name="custom_url_scheme">com.spheriva.app</string>
     
     <!-- Background Geolocation Plugin Configuration -->
-    <string name="capacitor_background_geolocation_notification_channel_name">Safety Tracking</string>
+    <string name="capacitor_background_geolocation_notification_channel_name">Safety Session Tracking</string>
     <string name="capacitor_background_geolocation_notification_icon">mipmap/ic_launcher</string>
+    <string name="capacitor_background_geolocation_notification_color">#FF5733</string>
 </resources>
