@@ -13,8 +13,9 @@
 
 import { Geolocation } from '@capacitor/geolocation';
 import { App } from '@capacitor/app';
-import { BackgroundGeolocation } from '@capacitor-community/background-geolocation';
+import { registerPlugin } from '@capacitor/core';
 
+const BackgroundGeolocation = registerPlugin('BackgroundGeolocation');
 // ============================================================================
 // CONSTANTS
 // ============================================================================

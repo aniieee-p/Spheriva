@@ -17,7 +17,9 @@
  * - FAILED_PERMISSION_REVOKED: Permission revoked, cleanup in progress
  */
 
-import { BackgroundGeolocation } from '@capacitor-community/background-geolocation';
+import { registerPlugin } from '@capacitor/core';
+
+const BackgroundGeolocation = registerPlugin('BackgroundGeolocation');
 import {
   initializePermissionManager,
   notifySessionStarted,
