@@ -75,6 +75,27 @@ const createSession = async (req, res) => {
 };
 
 /**
+ * @desc    Get the authenticated user's active safety session
+ * @route   GET /api/sessions/active
+ * @access  Private
+ */
+const getActiveSession = async (req, res) => {
+  try {
+    const session = await SafetySession.findOne({
+      user: req.user._id,
+      status: 'active'
+    });
+
+    return res.status(200).json({
+      success: true,
+      data: { session }
+    });
+  } catch (error) {
+    return handleError(res, error, 'Server error while retrieving active safety session');
+  }
+};
+
+/**
  * @desc    Save the latest location for an active session owned by the user
  * @route   POST /api/sessions/:id/location
  * @access  Private
@@ -154,6 +175,7 @@ const endSession = async (req, res) => {
 
 module.exports = {
   createSession,
+  getActiveSession,
   updateLocation,
   endSession
 };

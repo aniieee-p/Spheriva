@@ -1,6 +1,7 @@
 const express = require('express');
 const {
   createSession,
+  getActiveSession,
   updateLocation,
   endSession
 } = require('../controllers/session.controller');
@@ -10,6 +11,7 @@ const router = express.Router();
 
 router.use(protect);
 
+router.get('/active', getActiveSession);
 router.post('/', createSession);
 router.post('/:id/location', updateLocation);
 router.patch('/:id/end', endSession);

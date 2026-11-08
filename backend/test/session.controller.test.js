@@ -3,6 +3,7 @@ const test = require('node:test');
 const SafetySession = require('../src/models/SafetySession.model');
 const {
   createSession,
+  getActiveSession,
   updateLocation,
   endSession
 } = require('../src/controllers/session.controller');
@@ -80,6 +81,102 @@ test('first session creation uses the authenticated user and returns the server-
     assert.equal(res.statusCode, 201);
     assert.equal(res.body.data.session._id, 'server-generated-id');
   } finally {
+    restore();
+  }
+});
+
+test('getActiveSession returns the authenticated user’s active session', async () => {
+  let query;
+  const session = {
+    _id: 'active-session-id',
+    user: 'authenticated-user',
+    status: 'active'
+  };
+  const restore = restoreSessionMethods({
+    findOne: async (filter) => {
+      query = filter;
+      return session;
+    }
+  });
+
+  try {
+    const res = createResponse();
+    await getActiveSession({ user: { _id: 'authenticated-user' } }, res);
+
+    assert.deepEqual(query, {
+      user: 'authenticated-user',
+      status: 'active'
+    });
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(res.body, {
+      success: true,
+      data: { session }
+    });
+  } finally {
+    restore();
+  }
+});
+
+test('getActiveSession returns null when the authenticated user has no active session', async () => {
+  const restore = restoreSessionMethods({
+    findOne: async () => null
+  });
+
+  try {
+    const res = createResponse();
+    await getActiveSession({ user: { _id: 'authenticated-user' } }, res);
+
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(res.body, {
+      success: true,
+      data: { session: null }
+    });
+  } finally {
+    restore();
+  }
+});
+
+test('getActiveSession scopes the lookup to the authenticated user', async () => {
+  let query;
+  const restore = restoreSessionMethods({
+    findOne: async (filter) => {
+      query = filter;
+      return null;
+    }
+  });
+
+  try {
+    const res = createResponse();
+    await getActiveSession({ user: { _id: 'authenticated-user' } }, res);
+
+    assert.equal(query.user, 'authenticated-user');
+    assert.notEqual(query.user, 'another-user');
+    assert.equal(query.status, 'active');
+  } finally {
+    restore();
+  }
+});
+
+test('getActiveSession returns a server error when the database lookup fails', async () => {
+  const restore = restoreSessionMethods({
+    findOne: async () => {
+      throw new Error('database unavailable');
+    }
+  });
+  const originalConsoleError = console.error;
+  console.error = () => {};
+
+  try {
+    const res = createResponse();
+    await getActiveSession({ user: { _id: 'authenticated-user' } }, res);
+
+    assert.equal(res.statusCode, 500);
+    assert.deepEqual(res.body, {
+      success: false,
+      message: 'Server error while retrieving active safety session'
+    });
+  } finally {
+    console.error = originalConsoleError;
     restore();
   }
 });
