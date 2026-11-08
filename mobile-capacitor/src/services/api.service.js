@@ -39,10 +39,11 @@ apiClient.interceptors.response.use(
     if (error.response) {
       const { status, data } = error.response;
 
-      // Unauthorized - Clear token
+      // Defer auth cleanup so active tracking can be stopped first.
       if (status === 401) {
-        await storageService.clearAll();
-        console.log('Unauthorized - token cleared');
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('spheriva:unauthorized'));
+        }
       }
 
       return Promise.reject({
@@ -93,6 +94,15 @@ export const apiService = {
   
   createSession: async (sessionData) => {
     return await apiClient.post(API_CONFIG.ENDPOINTS.SESSION.CREATE, sessionData);
+  },
+
+  getActiveSession: async () => {
+    return await apiClient.get(API_CONFIG.ENDPOINTS.SESSION.ACTIVE);
+  },
+
+  updateSessionLocation: async (sessionId, location) => {
+    const url = API_CONFIG.ENDPOINTS.SESSION.LOCATION.replace(':id', sessionId);
+    return await apiClient.post(url, location);
   },
 
   getSessions: async () => {

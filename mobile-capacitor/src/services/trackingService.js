@@ -18,6 +18,8 @@
  */
 
 import { registerPlugin } from '@capacitor/core';
+import { apiService } from './api.service';
+import { storageService } from './storage.service';
 
 const BackgroundGeolocation = registerPlugin('BackgroundGeolocation');
 import {
@@ -45,7 +47,11 @@ const SessionState = {
   ACTIVE: 'active',
   STOPPING: 'stopping',
   FAILED_WATCHER_STUCK: 'failed_watcher_stuck',
-  FAILED_PERMISSION_REVOKED: 'failed_permission_revoked'
+  FAILED_PERMISSION_REVOKED: 'failed_permission_revoked',
+  BACKEND_END_PENDING: 'backend_end_pending',
+  BACKEND_CREATE_UNKNOWN: 'backend_create_unknown',
+  BACKEND_CREATE_CONFLICT: 'backend_create_conflict',
+  WATCHER_RECONCILIATION_PENDING: 'watcher_reconciliation_pending'
 };
 
 /**
@@ -70,13 +76,22 @@ const trackingState = {
   // Permission manager initialization
   permissionsInitialized: false,
   initializationPromise: null,  // Shared Promise for concurrent calls
+  cancelStartRequested: false,
+  startCompletionPromise: null,
+  recoveryPromise: null,
+  recoveryOwnerId: null,
 
   // Session lifecycle
   sessionState: SessionState.IDLE,
 
   // Active session identifiers
   activeSessionId: null,
+  activeSessionOwnerId: null,
   activeWatcherId: null,
+  backendCleanupPending: false,
+  backendSessionEnded: false,
+  watcherCleanupPending: false,
+  recoveryReason: null,
 
   // Callback management
   watcherCallback: null,
@@ -86,6 +101,12 @@ const trackingState = {
   earlyCallbackBuffer: [],
   maxBufferSize: 10,
   bufferProcessed: false,
+  acceptingLocationUploads: false,
+  locationUploadPromise: null,
+  pendingLocationUpload: null,
+  locationSyncPending: false,
+  lastQueuedLocationTimestamp: null,
+  lastUploadedLocationTimestamp: null,
 
   // Failure state tracking
   failureInProgress: false,
@@ -96,6 +117,390 @@ const trackingState = {
   cleanupAttempts: 0,
   maxCleanupAttempts: 3,  // Recommended limit (not enforced)
   cleanupStage: CleanupStage.NONE
+};
+
+const isValidBackendSessionId = (sessionId) =>
+  typeof sessionId === 'string' && /^[a-f\d]{24}$/i.test(sessionId);
+
+const watcherMayExistForLifecycle = (lifecycleState) => [
+  'watcher_registering',
+  'watcher_registered',
+  'active',
+  'watcher_cleanup_pending',
+  'watcher_reconciliation_pending',
+  'server_session_watcher_unknown',
+  'legacy_unknown'
+].includes(lifecycleState);
+
+const isUnownedSessionLifecycle = (lifecycleState) => [
+  'create_conflict',
+  'create_result_unknown_active_session',
+  'server_session_watcher_unknown'
+].includes(lifecycleState);
+
+const resetActiveTrackingState = () => {
+  trackingState.activeSessionId = null;
+  trackingState.activeSessionOwnerId = null;
+  trackingState.activeWatcherId = null;
+  trackingState.backendCleanupPending = false;
+  trackingState.backendSessionEnded = false;
+  trackingState.watcherCleanupPending = false;
+  trackingState.recoveryReason = null;
+  trackingState.acceptingLocationUploads = false;
+  trackingState.pendingLocationUpload = null;
+  trackingState.locationSyncPending = false;
+  trackingState.lastQueuedLocationTimestamp = null;
+  trackingState.lastUploadedLocationTimestamp = null;
+  trackingState.locationUploadPromise = null;
+  trackingState.sessionState = SessionState.IDLE;
+  trackingState.cleanupStage = CleanupStage.NONE;
+  trackingState.stuckWatcherId = null;
+  trackingState.cleanupAttempts = 0;
+  trackingState.failureReason = null;
+  if (!trackingState.startCompletionPromise) {
+    trackingState.cancelStartRequested = false;
+  }
+};
+
+const persistTrackingState = async (lifecycleState, overrides = {}) => {
+  const ownerId = overrides.userId || trackingState.activeSessionOwnerId;
+  if (!ownerId) throw new Error('Authenticated user ID is required to persist tracking state');
+
+  await storageService.saveSessionTrackingState(ownerId, {
+    sessionId: overrides.sessionId !== undefined
+      ? overrides.sessionId
+      : trackingState.activeSessionId,
+    watcherId: overrides.watcherId !== undefined
+      ? overrides.watcherId
+      : trackingState.activeWatcherId || trackingState.stuckWatcherId || null,
+    lifecycleState,
+    backendEnded: overrides.backendEnded !== undefined
+      ? overrides.backendEnded
+      : trackingState.backendSessionEnded
+  });
+};
+
+const completeBackendSession = async (sessionId, ownerId, skipBackendEnd = false) => {
+  trackingState.backendCleanupPending = true;
+
+  let persistenceError = null;
+  try {
+    await persistTrackingState('backend_cleanup_pending', {
+      userId: ownerId,
+      sessionId,
+      watcherId: null
+    });
+  } catch (error) {
+    console.error('Failed to persist pending backend session cleanup:', error);
+    persistenceError = error;
+  }
+
+  if (skipBackendEnd) {
+    trackingState.sessionState = SessionState.BACKEND_END_PENDING;
+    if (persistenceError) {
+      return {
+        success: false,
+        reason: 'cleanup_persistence_failed',
+        error: persistenceError.message
+      };
+    }
+    return { success: false, reason: 'backend_end_pending', skipped: true };
+  }
+
+  if (!trackingState.backendSessionEnded) {
+    try {
+      const response = await apiService.endSession(sessionId);
+      if (!response?.success) {
+        throw new Error(response?.message || 'Backend did not confirm session ending');
+      }
+    } catch (error) {
+      if (error.status !== 409) {
+        console.error('Failed to end backend safety session:', error);
+        trackingState.sessionState = SessionState.BACKEND_END_PENDING;
+        return {
+          success: false,
+          reason: persistenceError ? 'cleanup_persistence_failed' : 'backend_end_pending',
+          error: error.message
+        };
+      }
+    }
+
+    trackingState.backendSessionEnded = true;
+    try {
+      await persistTrackingState('backend_cleanup_pending', {
+        userId: ownerId,
+        sessionId,
+        watcherId: null,
+        backendEnded: true
+      });
+    } catch (error) {
+      console.error('Failed to persist completed backend session state:', error);
+    }
+  }
+
+  try {
+    await storageService.clearSessionTrackingState(ownerId, sessionId);
+  } catch (error) {
+    console.error('Backend session ended but pending cleanup state could not be cleared:', error);
+    trackingState.sessionState = SessionState.BACKEND_END_PENDING;
+    return {
+      success: false,
+      reason: 'cleanup_persistence_failed',
+      error: error.message
+    };
+  }
+
+  return { success: true };
+};
+
+const endPersistedBackendSession = async (userId, sessionId) => {
+  if (trackingState.backendSessionEnded) return { success: true };
+
+  try {
+    const response = await apiService.endSession(sessionId);
+    if (!response?.success) {
+      throw new Error(response?.message || 'Backend did not confirm session ending');
+    }
+    trackingState.backendSessionEnded = true;
+  } catch (error) {
+    if (error.status === 409) {
+      trackingState.backendSessionEnded = true;
+    } else {
+      console.error('Failed to end backend session during recovery:', error);
+      trackingState.backendCleanupPending = true;
+      return { success: false, error };
+    }
+  }
+
+  trackingState.backendCleanupPending = false;
+  try {
+    await persistTrackingState(
+      trackingState.watcherCleanupPending
+        ? (trackingState.activeWatcherId ? 'watcher_cleanup_pending' : 'watcher_reconciliation_pending')
+        : 'backend_cleanup_pending',
+      {
+        userId,
+        sessionId,
+        watcherId: trackingState.activeWatcherId || trackingState.stuckWatcherId || null,
+        backendEnded: true
+      }
+    );
+  } catch (error) {
+    console.error('Failed to persist backend session recovery result:', error);
+    return { success: false, error, backendEnded: true };
+  }
+  return { success: true };
+};
+
+const resolveStoredSessionCleanup = async (userId, { skipBackendEnd = false } = {}) => {
+  const pending = await storageService.getPendingSessionCleanup(userId);
+  if (!pending) return { success: true, found: false };
+
+  trackingState.activeSessionOwnerId = String(userId);
+  trackingState.activeSessionId = isUnownedSessionLifecycle(pending.lifecycleState)
+    ? null
+    : pending.sessionId || null;
+  trackingState.activeWatcherId = pending.watcherId || null;
+  trackingState.stuckWatcherId = null;
+  trackingState.backendSessionEnded = pending.backendEnded === true;
+  trackingState.backendCleanupPending = true;
+  trackingState.watcherCleanupPending = false;
+
+  if (pending.lifecycleState === 'create_conflict') {
+    trackingState.sessionState = SessionState.BACKEND_CREATE_CONFLICT;
+    trackingState.recoveryReason = 'active_session_already_exists';
+    return {
+      success: false,
+      found: true,
+      reason: 'active_session_already_exists',
+      backendCleanupPending: true,
+      watcherCleanupPending: false,
+      sessionId: null
+    };
+  }
+
+  if (isUnownedSessionLifecycle(pending.lifecycleState)) {
+    const watcherMayExist = pending.lifecycleState === 'server_session_watcher_unknown';
+    trackingState.sessionState = watcherMayExist
+      ? SessionState.WATCHER_RECONCILIATION_PENDING
+      : SessionState.BACKEND_CREATE_UNKNOWN;
+    trackingState.watcherCleanupPending = watcherMayExist;
+    trackingState.recoveryReason = watcherMayExist
+      ? 'watcher_id_unavailable'
+      : 'backend_session_id_unknown';
+    return {
+      success: false,
+      found: true,
+      reason: trackingState.recoveryReason,
+      backendCleanupPending: true,
+      watcherCleanupPending: watcherMayExist,
+      sessionId: null
+    };
+  }
+
+  if (!isValidBackendSessionId(pending.sessionId)) {
+    const lifecycleState = pending.lifecycleState || 'legacy_unknown';
+    let watcherMayExist = Boolean(pending.watcherId) ||
+      watcherMayExistForLifecycle(lifecycleState);
+
+    if (pending.watcherId) {
+      try {
+        await BackgroundGeolocation.removeWatcher({ id: pending.watcherId });
+      } catch (error) {
+        trackingState.activeWatcherId = pending.watcherId;
+        trackingState.stuckWatcherId = pending.watcherId;
+        trackingState.watcherCleanupPending = true;
+        trackingState.sessionState = SessionState.FAILED_WATCHER_STUCK;
+        trackingState.recoveryReason = 'watcher_removal_failed';
+        try {
+          await persistTrackingState('watcher_cleanup_pending', {
+            userId: String(userId),
+            sessionId: null,
+            watcherId: pending.watcherId
+          });
+        } catch (persistenceError) {
+          console.error('Failed to persist watcher ID during recovery:', persistenceError);
+        }
+        return {
+          success: false,
+          found: true,
+          reason: 'watcher_removal_failed',
+          backendCleanupPending: true,
+          watcherCleanupPending: true,
+          sessionId: null,
+          error: error.message
+        };
+      }
+      trackingState.activeWatcherId = null;
+      watcherMayExist = false;
+      try {
+        await persistTrackingState('create_response_unknown', {
+          userId: String(userId),
+          sessionId: null,
+          watcherId: null
+        });
+      } catch (error) {
+        console.error('Failed to persist watcher removal during unknown-session recovery:', error);
+      }
+    }
+
+    trackingState.sessionState = watcherMayExist
+      ? SessionState.WATCHER_RECONCILIATION_PENDING
+      : SessionState.BACKEND_CREATE_UNKNOWN;
+    trackingState.watcherCleanupPending = watcherMayExist;
+    trackingState.backendCleanupPending = !trackingState.backendSessionEnded;
+    trackingState.recoveryReason = watcherMayExist
+      ? 'watcher_id_unavailable'
+      : 'backend_session_id_unknown';
+    try {
+      await persistTrackingState(
+        watcherMayExist ? 'watcher_reconciliation_pending' : 'create_response_unknown',
+        {
+          userId: String(userId),
+          sessionId: null,
+          watcherId: null
+        }
+      );
+    } catch (error) {
+      console.error('Failed to persist incomplete session recovery state:', error);
+    }
+    return {
+      success: false,
+      found: true,
+      reason: watcherMayExist ? 'watcher_id_unavailable' : 'backend_session_id_unknown',
+      backendCleanupPending: !trackingState.backendSessionEnded,
+      watcherCleanupPending: watcherMayExist,
+      sessionId: null
+    };
+  }
+
+  const lifecycleState = pending.lifecycleState || 'legacy_unknown';
+  const watcherMayExistWithoutId = !pending.watcherId &&
+    watcherMayExistForLifecycle(lifecycleState);
+
+  if (pending.watcherId) {
+    try {
+      await BackgroundGeolocation.removeWatcher({ id: pending.watcherId });
+    } catch (error) {
+      trackingState.stuckWatcherId = pending.watcherId;
+      trackingState.activeWatcherId = pending.watcherId;
+      trackingState.watcherCleanupPending = true;
+      trackingState.sessionState = SessionState.FAILED_WATCHER_STUCK;
+      trackingState.recoveryReason = 'watcher_removal_failed';
+      const backendResult = skipBackendEnd
+        ? { success: false, skipped: true }
+        : await endPersistedBackendSession(String(userId), pending.sessionId);
+      try {
+        await persistTrackingState('watcher_cleanup_pending');
+      } catch (persistenceError) {
+        console.error('Failed to persist watcher cleanup state:', persistenceError);
+      }
+      return {
+        success: false,
+        found: true,
+        reason: 'watcher_removal_failed',
+        backendCleanupPending: !trackingState.backendSessionEnded,
+        watcherCleanupPending: true,
+        sessionId: pending.sessionId,
+        error: error.message || backendResult.error?.message
+      };
+    }
+    trackingState.activeWatcherId = null;
+    trackingState.stuckWatcherId = null;
+    trackingState.watcherCleanupPending = false;
+    try {
+      await persistTrackingState('backend_cleanup_pending', {
+        userId: String(userId),
+        sessionId: pending.sessionId,
+        watcherId: null
+      });
+    } catch (error) {
+      console.error('Failed to persist watcher removal during session recovery:', error);
+    }
+  } else if (watcherMayExistWithoutId) {
+    trackingState.watcherCleanupPending = true;
+    trackingState.sessionState = SessionState.WATCHER_RECONCILIATION_PENDING;
+    trackingState.recoveryReason = 'watcher_id_unavailable';
+    try {
+      await persistTrackingState('watcher_reconciliation_pending', {
+        userId: String(userId),
+        sessionId: pending.sessionId,
+        watcherId: null,
+        backendEnded: trackingState.backendSessionEnded
+      });
+    } catch (error) {
+      console.error('Failed to persist unresolved watcher reconciliation:', error);
+    }
+
+    return {
+      success: false,
+      found: true,
+      reason: 'watcher_id_unavailable',
+      backendCleanupPending: true,
+      watcherCleanupPending: true,
+      sessionId: pending.sessionId
+    };
+  }
+
+  const result = await completeBackendSession(
+    pending.sessionId,
+    String(userId),
+    skipBackendEnd
+  );
+  if (result.success) {
+    resetActiveTrackingState();
+    return { ...result, found: true };
+  }
+
+  trackingState.sessionState = SessionState.BACKEND_END_PENDING;
+  trackingState.recoveryReason = result.reason;
+  return {
+    ...result,
+    found: true,
+    backendCleanupPending: true,
+    watcherCleanupPending: false,
+    sessionId: pending.sessionId
+  };
 };
 
 // ============================================================================
@@ -167,6 +572,491 @@ export async function initializeTrackingService() {
   return await initPromise;
 }
 
+const recoverSafetySessionInternal = async (userId) => {
+  const ownerId = userId ? String(userId) : '';
+  if (!ownerId) return { success: false, reason: 'authentication_required' };
+
+  if (
+    trackingState.sessionState !== SessionState.IDLE &&
+    trackingState.activeSessionOwnerId &&
+    trackingState.activeSessionOwnerId !== ownerId
+  ) {
+    return {
+      success: false,
+      reason: 'another_user_session_in_memory',
+      cleanupPending: true,
+      backendCleanupPending: trackingState.backendCleanupPending,
+      watcherCleanupPending: trackingState.watcherCleanupPending
+    };
+  }
+
+  const liveSessionIsKnown = trackingState.sessionState === SessionState.ACTIVE &&
+    trackingState.activeSessionOwnerId === ownerId &&
+    isValidBackendSessionId(trackingState.activeSessionId) &&
+    typeof trackingState.activeWatcherId === 'string' &&
+    trackingState.activeWatcherId.length > 0;
+  let pending;
+  try {
+    pending = await storageService.getPendingSessionCleanup(ownerId);
+  } catch (error) {
+    trackingState.activeSessionOwnerId = ownerId;
+    trackingState.sessionState = SessionState.BACKEND_CREATE_UNKNOWN;
+    trackingState.backendCleanupPending = true;
+    trackingState.recoveryReason = 'tracking_state_read_failed';
+    console.error('Safety session recovery could not read local tracking state:', error);
+    return {
+      success: false,
+      reason: 'tracking_state_read_failed',
+      cleanupPending: true,
+      backendCleanupPending: true,
+      watcherCleanupPending: trackingState.watcherCleanupPending,
+      error: error.message
+    };
+  }
+
+  let activeSession;
+  try {
+    const response = await apiService.getActiveSession();
+    activeSession = response?.data?.session;
+    if (
+      response?.success !== true ||
+      (activeSession !== null &&
+        (!activeSession || !isValidBackendSessionId(activeSession._id)))
+    ) {
+      throw new Error('Backend returned an invalid active safety session response');
+    }
+  } catch (error) {
+    if (liveSessionIsKnown) {
+      console.error('Could not verify the active backend session:', error);
+      return {
+        success: false,
+        reason: 'active_session_lookup_failed',
+        activeSession: true,
+        sessionId: trackingState.activeSessionId,
+        error: error.message
+      };
+    }
+
+    trackingState.activeSessionOwnerId = ownerId;
+    trackingState.activeSessionId = pending?.sessionId || null;
+    trackingState.activeWatcherId = pending?.watcherId || null;
+    trackingState.watcherCleanupPending = Boolean(
+      pending?.watcherId ||
+      watcherMayExistForLifecycle(pending?.lifecycleState)
+    );
+    trackingState.backendCleanupPending = true;
+    trackingState.sessionState = trackingState.watcherCleanupPending
+      ? SessionState.WATCHER_RECONCILIATION_PENDING
+      : SessionState.BACKEND_CREATE_UNKNOWN;
+    trackingState.recoveryReason = 'active_session_lookup_failed';
+
+    if (!pending) {
+      try {
+        await persistTrackingState('active_session_lookup_pending', {
+          userId: ownerId,
+          sessionId: null,
+          watcherId: null,
+          backendEnded: false
+        });
+      } catch (persistenceError) {
+        console.error('Could not persist active session lookup state:', persistenceError);
+      }
+    }
+
+    console.error('Safety session recovery could not query the backend:', error);
+    return {
+      success: false,
+      reason: 'active_session_lookup_failed',
+      cleanupPending: true,
+      backendCleanupPending: true,
+      watcherCleanupPending: trackingState.watcherCleanupPending,
+      sessionId: trackingState.activeSessionId,
+      error: error.message
+    };
+  }
+
+  const serverSessionId = activeSession?._id || null;
+
+  if (pending?.lifecycleState === 'create_conflict') {
+    if (serverSessionId) {
+      trackingState.activeSessionOwnerId = ownerId;
+      trackingState.activeSessionId = null;
+      trackingState.activeWatcherId = null;
+      trackingState.backendCleanupPending = true;
+      trackingState.backendSessionEnded = false;
+      trackingState.watcherCleanupPending = false;
+      trackingState.sessionState = SessionState.BACKEND_CREATE_CONFLICT;
+      trackingState.recoveryReason = 'active_session_already_exists';
+      return {
+        success: false,
+        found: true,
+        reason: 'active_session_already_exists',
+        cleanupPending: true,
+        backendCleanupPending: true,
+        watcherCleanupPending: false,
+        sessionId: null,
+        note: 'An active safety session already exists for this account. This device did not create it, so it was not changed.'
+      };
+    }
+
+    await storageService.clearSessionTrackingState(
+      ownerId,
+      pending.sessionId,
+      pending.lifecycleState
+    );
+    resetActiveTrackingState();
+    return { success: true, recovered: true };
+  }
+
+  const createOutcomeUnknown = [
+    'creating_backend_session',
+    'create_response_unknown',
+    'create_result_unknown_active_session'
+  ].includes(pending?.lifecycleState);
+
+  if (createOutcomeUnknown) {
+    if (serverSessionId) {
+      trackingState.activeSessionOwnerId = ownerId;
+      trackingState.activeSessionId = null;
+      trackingState.activeWatcherId = null;
+      trackingState.backendCleanupPending = true;
+      trackingState.backendSessionEnded = false;
+      trackingState.watcherCleanupPending = false;
+      trackingState.sessionState = SessionState.BACKEND_CREATE_UNKNOWN;
+      trackingState.recoveryReason = 'backend_session_id_unknown';
+      try {
+        await storageService.saveSessionTrackingState(ownerId, {
+          ...pending,
+          userId: ownerId,
+          sessionId: null,
+          unownedSessionId: serverSessionId,
+          watcherId: null,
+          lifecycleState: 'create_result_unknown_active_session',
+          backendEnded: false
+        });
+      } catch (error) {
+        console.error('Could not persist ambiguous active session state:', error);
+      }
+      return {
+        success: false,
+        found: true,
+        reason: 'backend_session_id_unknown',
+        cleanupPending: true,
+        backendCleanupPending: true,
+        watcherCleanupPending: false,
+        sessionId: null,
+        note: 'The server has an active session, but this device cannot verify that it created it. The session was not changed; resolve it from the device that started it.'
+      };
+    }
+
+    await storageService.clearSessionTrackingState(
+      ownerId,
+      pending.sessionId,
+      pending.lifecycleState
+    );
+    resetActiveTrackingState();
+    return {
+      success: true,
+      recovered: true,
+      backendSessionEnded: true
+    };
+  }
+
+  if (
+    pending?.lifecycleState === 'server_session_watcher_unknown' &&
+    pending.unownedSessionId
+  ) {
+    trackingState.activeSessionOwnerId = ownerId;
+    trackingState.activeSessionId = null;
+    trackingState.activeWatcherId = null;
+    trackingState.backendCleanupPending = Boolean(serverSessionId);
+    trackingState.backendSessionEnded = !serverSessionId;
+    trackingState.watcherCleanupPending = true;
+    trackingState.sessionState = SessionState.WATCHER_RECONCILIATION_PENDING;
+    trackingState.recoveryReason = 'watcher_id_unavailable';
+    return {
+      success: false,
+      found: true,
+      reason: 'watcher_id_unavailable',
+      cleanupPending: true,
+      backendCleanupPending: Boolean(serverSessionId),
+      watcherCleanupPending: true,
+      sessionId: null,
+      note: serverSessionId
+        ? 'An active server session exists, but this device cannot confirm its ownership or discover the native watcher. No session was changed.'
+        : 'The server session is no longer active, but the native watcher ID is unknown. Tracking remains blocked until watcher state is reconciled.'
+    };
+  }
+
+  if (liveSessionIsKnown) {
+    if (serverSessionId === trackingState.activeSessionId) {
+      return {
+        success: true,
+        recovered: false,
+        sessionId: trackingState.activeSessionId
+      };
+    }
+
+    const stopped = await stopSafetySession();
+    if (!stopped.success) return { ...stopped, cleanupPending: true };
+    if (!serverSessionId) return { success: true, recovered: true };
+    pending = await storageService.getPendingSessionCleanup(ownerId);
+  }
+
+  if (!serverSessionId) {
+    if (isUnownedSessionLifecycle(pending?.lifecycleState)) {
+      const watcherUnknown =
+        pending.lifecycleState === 'server_session_watcher_unknown';
+      trackingState.activeSessionOwnerId = ownerId;
+      trackingState.activeSessionId = null;
+      trackingState.activeWatcherId = null;
+      trackingState.backendCleanupPending = false;
+      trackingState.backendSessionEnded = true;
+      trackingState.watcherCleanupPending = watcherUnknown;
+      trackingState.sessionState = watcherUnknown
+        ? SessionState.WATCHER_RECONCILIATION_PENDING
+        : SessionState.BACKEND_CREATE_UNKNOWN;
+      trackingState.recoveryReason = watcherUnknown
+        ? 'watcher_id_unavailable'
+        : pending.lifecycleState === 'create_conflict'
+          ? null
+          : 'backend_session_id_unknown';
+
+      if (pending.lifecycleState === 'create_conflict') {
+        await storageService.clearSessionTrackingState(
+          ownerId,
+          pending.sessionId,
+          pending.lifecycleState
+        );
+        resetActiveTrackingState();
+        return { success: true, recovered: true };
+      }
+
+      return {
+        success: false,
+        found: true,
+        reason: trackingState.recoveryReason,
+        cleanupPending: true,
+        backendCleanupPending: false,
+        watcherCleanupPending: watcherUnknown,
+        sessionId: null,
+        note: watcherUnknown
+          ? 'The server session has ended, but the native watcher ID is unknown. Tracking remains blocked.'
+          : 'The previous create result remains ambiguous. The app will not assume ownership or start another session.'
+      };
+    }
+
+    if (!pending) {
+      if (trackingState.sessionState !== SessionState.IDLE) {
+        resetActiveTrackingState();
+      }
+      trackingState.activeSessionOwnerId = null;
+      return { success: true, recovered: false };
+    }
+
+    const lifecycleState = pending.lifecycleState || 'legacy_unknown';
+    const canHaveNoWatcher = !pending.watcherId &&
+      ['creating_backend_session', 'backend_session_created',
+        'active_session_lookup_pending'].includes(lifecycleState);
+
+    if (canHaveNoWatcher) {
+      await storageService.clearSessionTrackingState(
+        ownerId,
+        pending.sessionId,
+        lifecycleState
+      );
+      resetActiveTrackingState();
+      return { success: true, recovered: true, backendSessionEnded: true };
+    }
+
+    const result = await resolveStoredSessionCleanup(ownerId);
+    return {
+      ...result,
+      cleanupPending: !result.success,
+      backendCleanupPending: trackingState.backendCleanupPending,
+      watcherCleanupPending: trackingState.watcherCleanupPending,
+      sessionId: trackingState.activeSessionId,
+      recoveryReason: trackingState.recoveryReason
+    };
+  }
+
+  if (pending && pending.sessionId !== serverSessionId) {
+    const localCreateHadNoWatcher = !pending.watcherId &&
+      ['creating_backend_session', 'create_response_unknown', 'backend_session_created',
+        'active_session_lookup_pending'].includes(pending.lifecycleState);
+
+    if (localCreateHadNoWatcher) {
+      await storageService.clearSessionTrackingState(
+        ownerId,
+        pending.sessionId,
+        pending.lifecycleState
+      );
+      pending = null;
+      resetActiveTrackingState();
+    } else {
+      const localCleanup = await resolveStoredSessionCleanup(ownerId);
+      if (!localCleanup.success) {
+        return {
+          ...localCleanup,
+          cleanupPending: true,
+          backendCleanupPending: trackingState.backendCleanupPending,
+          watcherCleanupPending: trackingState.watcherCleanupPending,
+          sessionId: trackingState.activeSessionId,
+          recoveryReason: trackingState.recoveryReason
+        };
+      }
+      pending = await storageService.getPendingSessionCleanup(ownerId);
+      if (pending) {
+        return {
+          success: false,
+          reason: 'active_session_state_mismatch',
+          cleanupPending: true,
+          backendCleanupPending: true,
+          watcherCleanupPending: trackingState.watcherCleanupPending,
+          sessionId: pending.sessionId
+        };
+      }
+      resetActiveTrackingState();
+    }
+  }
+
+  if (pending) {
+    const lifecycleState = pending.lifecycleState || 'legacy_unknown';
+    const createTimedOutBeforeWatcher = !pending.watcherId &&
+      ['creating_backend_session', 'create_response_unknown', 'backend_session_created',
+        'active_session_lookup_pending'].includes(lifecycleState);
+
+    if (createTimedOutBeforeWatcher) {
+      trackingState.activeSessionOwnerId = ownerId;
+      trackingState.activeSessionId = null;
+      trackingState.activeWatcherId = null;
+      trackingState.backendCleanupPending = true;
+      trackingState.backendSessionEnded = false;
+      trackingState.watcherCleanupPending = false;
+      trackingState.sessionState = SessionState.BACKEND_END_PENDING;
+
+      try {
+        await persistTrackingState('backend_cleanup_pending', {
+          userId: ownerId,
+          sessionId: serverSessionId,
+          watcherId: null,
+          backendEnded: false
+        });
+      } catch (error) {
+        console.error('Could not persist recovered backend session ID:', error);
+        return {
+          success: false,
+          reason: 'cleanup_persistence_failed',
+          cleanupPending: true,
+          backendCleanupPending: true,
+          sessionId: serverSessionId,
+          error: error.message
+        };
+      }
+
+      const result = await completeBackendSession(serverSessionId, ownerId);
+      if (result.success) {
+        resetActiveTrackingState();
+        return { success: true, recovered: true, backendSessionEnded: true };
+      }
+      return {
+        ...result,
+        cleanupPending: true,
+        backendCleanupPending: true,
+        watcherCleanupPending: false,
+        sessionId: serverSessionId
+      };
+    }
+
+    const result = await resolveStoredSessionCleanup(ownerId);
+    return {
+      ...result,
+      cleanupPending: !result.success,
+      backendCleanupPending: trackingState.backendCleanupPending,
+      watcherCleanupPending: trackingState.watcherCleanupPending,
+      sessionId: trackingState.activeSessionId,
+      recoveryReason: trackingState.recoveryReason
+    };
+  }
+
+  trackingState.activeSessionOwnerId = ownerId;
+  trackingState.activeSessionId = serverSessionId;
+  trackingState.activeWatcherId = null;
+  trackingState.backendCleanupPending = true;
+  trackingState.backendSessionEnded = false;
+  trackingState.watcherCleanupPending = true;
+  trackingState.sessionState = SessionState.WATCHER_RECONCILIATION_PENDING;
+  trackingState.recoveryReason = 'watcher_id_unavailable';
+  try {
+    await storageService.saveSessionTrackingState(ownerId, {
+      userId: ownerId,
+      sessionId: null,
+      unownedSessionId: serverSessionId,
+      watcherId: null,
+      lifecycleState: 'server_session_watcher_unknown',
+      backendEnded: false
+    });
+  } catch (error) {
+    console.error('Could not persist server session with unknown watcher state:', error);
+  }
+  return {
+    success: false,
+    found: true,
+    reason: 'watcher_id_unavailable',
+    cleanupPending: true,
+    backendCleanupPending: true,
+    watcherCleanupPending: true,
+    sessionId: serverSessionId
+  };
+};
+
+export async function recoverSafetySession(userId) {
+  const ownerId = userId ? String(userId) : '';
+  if (
+    trackingState.recoveryPromise &&
+    trackingState.recoveryOwnerId !== ownerId
+  ) {
+    return {
+      success: false,
+      reason: 'another_user_recovery_in_progress',
+      cleanupPending: true
+    };
+  }
+  if (trackingState.recoveryPromise) return await trackingState.recoveryPromise;
+
+  const recoveryPromise = recoverSafetySessionInternal(userId);
+  trackingState.recoveryPromise = recoveryPromise;
+  trackingState.recoveryOwnerId = ownerId;
+  try {
+    return await recoveryPromise;
+  } catch (error) {
+    if (trackingState.sessionState !== SessionState.ACTIVE) {
+      trackingState.activeSessionOwnerId = ownerId;
+      trackingState.backendCleanupPending = true;
+      trackingState.sessionState = trackingState.activeWatcherId
+        ? SessionState.FAILED_WATCHER_STUCK
+        : SessionState.WATCHER_RECONCILIATION_PENDING;
+      trackingState.watcherCleanupPending = true;
+      trackingState.recoveryReason = 'session_recovery_failed';
+    }
+    console.error('Safety session recovery failed:', error);
+    return {
+      success: false,
+      reason: 'session_recovery_failed',
+      cleanupPending: true,
+      backendCleanupPending: trackingState.backendCleanupPending,
+      watcherCleanupPending: trackingState.watcherCleanupPending,
+      sessionId: trackingState.activeSessionId,
+      error: error.message
+    };
+  } finally {
+    if (trackingState.recoveryPromise === recoveryPromise) {
+      trackingState.recoveryPromise = null;
+      trackingState.recoveryOwnerId = null;
+    }
+  }
+}
+
 /**
  * Start a safety session with background location tracking
  *
@@ -177,6 +1067,10 @@ export async function initializeTrackingService() {
  * @returns {Promise<Object>} Start result
  */
 export async function startSafetySession(options = {}) {
+  if (trackingState.recoveryPromise) {
+    await trackingState.recoveryPromise;
+  }
+
   // STEP 1: Validate options before any state changes
   const validationResult = validateSessionOptions(options);
   if (!validationResult.valid) {
@@ -192,6 +1086,10 @@ export async function startSafetySession(options = {}) {
     return {
       success: false,
       reason: 'stuck_watcher_exists',
+      cleanupPending: true,
+      backendCleanupPending: trackingState.backendCleanupPending,
+      watcherCleanupPending: true,
+      sessionId: trackingState.activeSessionId,
       stuckWatcherId: trackingState.stuckWatcherId,
       cleanupAttempts: trackingState.cleanupAttempts,
       note: 'Call retryCleanup() to resolve stuck watcher before starting new session'
@@ -203,15 +1101,57 @@ export async function startSafetySession(options = {}) {
     return {
       success: false,
       reason: 'invalid_state',
+      cleanupPending:
+        trackingState.backendCleanupPending || trackingState.watcherCleanupPending,
+      backendCleanupPending: trackingState.backendCleanupPending,
+      watcherCleanupPending: trackingState.watcherCleanupPending,
+      sessionId: trackingState.activeSessionId,
       currentState: trackingState.sessionState,
       note: getStateTransitionGuidance(trackingState.sessionState)
     };
   }
 
+  const ownerId = options.userId ? String(options.userId) : '';
+  if (!ownerId) {
+    return { success: false, reason: 'authentication_required' };
+  }
+
   // STEP 4: Transition to STARTING
+  trackingState.cancelStartRequested = false;
   trackingState.sessionState = SessionState.STARTING;
+  trackingState.activeSessionOwnerId = ownerId;
+  let resolveStartCompletion;
+  const startCompletionPromise = new Promise((resolve) => {
+    resolveStartCompletion = resolve;
+  });
+  trackingState.startCompletionPromise = startCompletionPromise;
 
   try {
+    const token = await storageService.getToken();
+    if (!token) {
+      trackingState.sessionState = SessionState.IDLE;
+      return { success: false, reason: 'authentication_required' };
+    }
+
+    const pendingCleanup = await resolveStoredSessionCleanup(ownerId);
+    if (!pendingCleanup.success) {
+      return {
+        success: false,
+        reason: pendingCleanup.reason || 'backend_cleanup_pending',
+        cleanupPending: true,
+        backendCleanupPending: trackingState.backendCleanupPending,
+        watcherCleanupPending: trackingState.watcherCleanupPending,
+        sessionId: trackingState.activeSessionId,
+        note: 'Resolve the previous safety session before starting another one'
+      };
+    }
+    trackingState.sessionState = SessionState.STARTING;
+    if (trackingState.cancelStartRequested) {
+      trackingState.sessionState = SessionState.IDLE;
+      trackingState.activeSessionOwnerId = null;
+      return { success: false, reason: 'start_cancelled' };
+    }
+
     // STEP 5: Initialize permission manager if needed
     if (!trackingState.permissionsInitialized) {
       const initResult = await initializeTrackingService();
@@ -258,9 +1198,167 @@ export async function startSafetySession(options = {}) {
       };
     }
 
-    // STEP 7: Generate session ID
-    const sessionId = generateSessionId();
+    if (trackingState.cancelStartRequested) {
+      trackingState.sessionState = SessionState.IDLE;
+      return { success: false, reason: 'start_cancelled' };
+    }
+
+    trackingState.activeSessionOwnerId = ownerId;
+    trackingState.activeSessionId = null;
+    trackingState.activeWatcherId = null;
+    trackingState.backendCleanupPending = true;
+    trackingState.backendSessionEnded = false;
+    try {
+      await persistTrackingState('creating_backend_session', {
+        userId: ownerId,
+        sessionId: null,
+        watcherId: null,
+        backendEnded: false
+      });
+    } catch (error) {
+      resetActiveTrackingState();
+      return {
+        success: false,
+        reason: 'tracking_state_persistence_failed',
+        error: error.message,
+        cleanupPending: false,
+        backendCleanupPending: false,
+        watcherCleanupPending: false
+      };
+    }
+
+    // STEP 7: Create the backend session before registering native tracking
+    let createResponse;
+    try {
+      createResponse = await apiService.createSession({});
+    } catch (error) {
+      if (error.status === 409) {
+        trackingState.sessionState = SessionState.BACKEND_CREATE_CONFLICT;
+        trackingState.recoveryReason = 'active_session_already_exists';
+        trackingState.backendCleanupPending = true;
+        trackingState.watcherCleanupPending = false;
+        try {
+          await persistTrackingState('create_conflict', {
+            userId: ownerId,
+            sessionId: null,
+            watcherId: null,
+            backendEnded: false
+          });
+        } catch (persistenceError) {
+          console.error('Failed to persist active-session conflict:', persistenceError);
+        }
+
+        return {
+          success: false,
+          reason: 'active_session_already_exists',
+          error: error.message,
+          cleanupPending: true,
+          backendCleanupPending: true,
+          watcherCleanupPending: false,
+          sessionId: null,
+          note: 'An active safety session already exists for this account, possibly on another device. This device will not adopt or end it.'
+        };
+      }
+
+      trackingState.sessionState = SessionState.BACKEND_CREATE_UNKNOWN;
+      trackingState.recoveryReason = 'backend_session_id_unknown';
+      try {
+        await persistTrackingState('create_response_unknown', {
+          userId: ownerId,
+          sessionId: null,
+          watcherId: null,
+          backendEnded: false
+        });
+      } catch (persistenceError) {
+        console.error('Failed to persist unknown backend create result:', persistenceError);
+      }
+
+      return {
+        success: false,
+        reason: 'backend_create_result_unknown',
+        error: error.message,
+        cleanupPending: true,
+        backendCleanupPending: true,
+        watcherCleanupPending: false,
+        sessionId: null,
+        note: 'The server may have created a session, but its ID was not received'
+      };
+    }
+
+    const sessionId = createResponse?.data?.session?._id;
+    if (!createResponse?.success || !isValidBackendSessionId(sessionId)) {
+      trackingState.sessionState = SessionState.BACKEND_CREATE_UNKNOWN;
+      trackingState.recoveryReason = 'backend_session_id_unknown';
+      try {
+        await persistTrackingState('create_response_unknown', {
+          userId: ownerId,
+          sessionId: null,
+          watcherId: null,
+          backendEnded: false
+        });
+      } catch (error) {
+        console.error('Failed to persist invalid backend create response:', error);
+      }
+      return {
+        success: false,
+        reason: 'backend_create_result_unknown',
+        note: createResponse?.message || 'Backend returned an invalid session ID',
+        cleanupPending: true,
+        backendCleanupPending: true,
+        watcherCleanupPending: false,
+        sessionId: null
+      };
+    }
+
     trackingState.activeSessionId = sessionId;
+    trackingState.activeSessionOwnerId = ownerId;
+    trackingState.backendCleanupPending = true;
+
+    try {
+      await persistTrackingState('backend_session_created', {
+        userId: ownerId,
+        sessionId,
+        watcherId: null,
+        backendEnded: false
+      });
+    } catch (storageError) {
+      console.error('Could not persist new backend session for cleanup:', storageError);
+      const cleanupResult = await completeBackendSession(sessionId, ownerId);
+      if (cleanupResult.success) {
+        resetActiveTrackingState();
+        return {
+          success: false,
+          reason: 'session_state_persistence_failed',
+          error: storageError.message
+        };
+      }
+
+      trackingState.sessionState = SessionState.BACKEND_END_PENDING;
+      return {
+        success: false,
+        reason: 'backend_cleanup_pending',
+        cleanupPending: true,
+        backendCleanupPending: true,
+        watcherCleanupPending: false,
+        sessionId,
+        error: cleanupResult.error || storageError.message,
+        note: 'The backend session exists but local cleanup state could not be saved'
+      };
+    }
+
+    if (trackingState.cancelStartRequested) {
+      const cleanupResult = await completeBackendSession(sessionId, ownerId);
+      if (cleanupResult.success) resetActiveTrackingState();
+      else trackingState.sessionState = SessionState.BACKEND_END_PENDING;
+      return {
+        success: false,
+        reason: cleanupResult.success ? 'start_cancelled' : 'backend_cleanup_pending',
+        cleanupPending: !cleanupResult.success,
+        backendCleanupPending: !cleanupResult.success,
+        watcherCleanupPending: false,
+        sessionId: cleanupResult.success ? undefined : sessionId
+      };
+    }
 
     // STEP 8: Increment callback generation and initialize buffer
     trackingState.callbackGeneration++;
@@ -276,10 +1374,32 @@ export async function startSafetySession(options = {}) {
 
     // STEP 10: Transition to WATCHER_REGISTERING
     trackingState.sessionState = SessionState.WATCHER_REGISTERING;
+    try {
+      await persistTrackingState('watcher_registering', {
+        userId: ownerId,
+        sessionId,
+        watcherId: null,
+        backendEnded: false
+      });
+    } catch (error) {
+      const cleanupResult = await completeBackendSession(sessionId, ownerId);
+      if (cleanupResult.success) resetActiveTrackingState();
+      else trackingState.sessionState = SessionState.BACKEND_END_PENDING;
+      return {
+        success: false,
+        reason: cleanupResult.success
+          ? 'tracking_state_persistence_failed'
+          : 'backend_cleanup_pending',
+        error: error.message,
+        cleanupPending: !cleanupResult.success,
+        backendCleanupPending: !cleanupResult.success,
+        watcherCleanupPending: false,
+        sessionId: cleanupResult.success ? null : sessionId
+      };
+    }
 
     // STEP 11: Register watcher
     let watcherId = null;
-    let watcherRegistered = false;
 
     try {
       watcherId = await BackgroundGeolocation.addWatcher(
@@ -294,29 +1414,81 @@ export async function startSafetySession(options = {}) {
       );
 
       // If we reach here, native watcher IS registered
-      watcherRegistered = true;
       trackingState.activeWatcherId = watcherId;
+      await persistTrackingState('watcher_registered', {
+        userId: ownerId,
+        sessionId,
+        watcherId,
+        backendEnded: trackingState.backendSessionEnded
+      });
 
     } catch (watcherError) {
-      // Watcher registration rejected BEFORE native registration
-      // Safe to clean up without removal
+      if (watcherId) {
+        trackingState.stuckWatcherId = watcherId;
+        trackingState.watcherCleanupPending = true;
+        trackingState.sessionState = SessionState.FAILED_WATCHER_STUCK;
+        try {
+          await BackgroundGeolocation.removeWatcher({ id: watcherId });
+          trackingState.activeWatcherId = null;
+          trackingState.stuckWatcherId = null;
+          trackingState.watcherCleanupPending = false;
+        } catch (removeError) {
+          console.error('Watcher rollback failed after persistence error:', removeError);
+          const backendResult = await endPersistedBackendSession(ownerId, sessionId);
+          try {
+            await persistTrackingState('watcher_cleanup_pending', {
+              userId: ownerId,
+              sessionId,
+              watcherId,
+              backendEnded: false
+            });
+          } catch (persistenceError) {
+            console.error('Failed to persist watcher rollback state:', persistenceError);
+          }
+          return {
+            success: false,
+            reason: 'watcher_cleanup_pending',
+            error: watcherError.message,
+            cleanupPending: true,
+            backendCleanupPending: !trackingState.backendSessionEnded,
+            watcherCleanupPending: true,
+            sessionId,
+            watcherId,
+            cleanupError: backendResult.error?.message
+          };
+        }
+      }
+
       trackingState.callbackGeneration++;
       trackingState.watcherCallback = null;
       trackingState.earlyCallbackBuffer = [];
-      trackingState.activeSessionId = null;
-      trackingState.sessionState = SessionState.IDLE;
+      const cleanupResult = await completeBackendSession(sessionId, ownerId);
+      if (cleanupResult.success) resetActiveTrackingState();
 
       return {
         success: false,
-        reason: 'watcher_registration_failed',
-        error: watcherError.message
+        reason: cleanupResult.success
+          ? 'watcher_registration_failed'
+          : 'backend_cleanup_pending',
+        error: watcherError.message,
+        cleanupPending: !cleanupResult.success,
+        backendCleanupPending: !cleanupResult.success,
+        watcherCleanupPending: false,
+        sessionId: cleanupResult.success ? undefined : sessionId,
+        note: cleanupResult.success
+          ? undefined
+          : 'Native watcher failed to start and backend session cleanup is pending'
       };
     }
 
     // From this point forward, watcher IS registered and MUST be removed on error
 
     try {
-      // STEP 12: Notify permission manager
+    if (trackingState.cancelStartRequested) {
+      throw new Error('Safety session start was cancelled');
+    }
+
+    // STEP 12: Notify permission manager
       const notifyResult = notifySessionStarted(sessionId, watcherId);
       if (!notifyResult.success) {
         throw new Error(`notifySessionStarted failed: ${notifyResult.reason}`);
@@ -324,6 +1496,13 @@ export async function startSafetySession(options = {}) {
 
       // STEP 13: Transition to ACTIVE
       trackingState.sessionState = SessionState.ACTIVE;
+      trackingState.acceptingLocationUploads = true;
+      await persistTrackingState('active', {
+        userId: ownerId,
+        sessionId,
+        watcherId,
+        backendEnded: false
+      });
 
       // STEP 14: Process buffered callbacks
       const processedCount = processBufferedCallbacks();
@@ -346,6 +1525,11 @@ export async function startSafetySession(options = {}) {
       trackingState.callbackGeneration++; // Invalidate callbacks first
       trackingState.watcherCallback = null;
       trackingState.earlyCallbackBuffer = [];
+      trackingState.acceptingLocationUploads = false;
+      trackingState.pendingLocationUpload = null;
+      if (trackingState.locationUploadPromise) {
+        await trackingState.locationUploadPromise;
+      }
 
       // Attempt watcher removal
       let removalSucceeded = false;
@@ -357,29 +1541,54 @@ export async function startSafetySession(options = {}) {
       }
 
       if (removalSucceeded) {
-        // Clean removal - return to IDLE
         trackingState.activeWatcherId = null;
-        trackingState.activeSessionId = null;
-        trackingState.sessionState = SessionState.IDLE;
+        resetSessionState();
+        const cleanupResult = await completeBackendSession(sessionId, ownerId);
+        if (cleanupResult.success) resetActiveTrackingState();
 
         return {
           success: false,
-          reason: 'post_registration_error',
+          reason: cleanupResult.success
+            ? postRegistrationError.message === 'Safety session start was cancelled'
+              ? 'start_cancelled'
+              : 'post_registration_error'
+            : 'backend_cleanup_pending',
           error: postRegistrationError.message,
-          cleanupSucceeded: true
+          cleanupSucceeded: cleanupResult.success,
+          cleanupPending: !cleanupResult.success,
+          backendCleanupPending: !cleanupResult.success,
+          watcherCleanupPending: false,
+          sessionId: cleanupResult.success ? undefined : sessionId
         };
       } else {
         // Removal failed - watcher stuck
         trackingState.sessionState = SessionState.FAILED_WATCHER_STUCK;
         trackingState.stuckWatcherId = watcherId;
         trackingState.cleanupAttempts = 1;
-        // DO NOT clear activeWatcherId or activeSessionId yet
+        trackingState.watcherCleanupPending = true;
+        trackingState.backendCleanupPending = true;
+        const backendResult = await endPersistedBackendSession(ownerId, sessionId);
+        try {
+          await persistTrackingState('watcher_cleanup_pending', {
+            userId: ownerId,
+            sessionId,
+            watcherId,
+            backendEnded: trackingState.backendSessionEnded
+          });
+        } catch (persistenceError) {
+          console.error('Failed to persist failed-start watcher cleanup:', persistenceError);
+        }
 
         return {
           success: false,
-          reason: 'post_registration_error_watcher_stuck',
+          reason: 'watcher_cleanup_pending',
           error: postRegistrationError.message,
+          cleanupPending: true,
+          backendCleanupPending: !trackingState.backendSessionEnded,
+          watcherCleanupPending: true,
+          sessionId,
           stuckWatcherId: watcherId,
+          cleanupError: backendResult.error?.message,
           note: 'Call retryCleanup() before starting new session'
         };
       }
@@ -391,14 +1600,47 @@ export async function startSafetySession(options = {}) {
     trackingState.callbackGeneration++;
     trackingState.watcherCallback = null;
     trackingState.earlyCallbackBuffer = [];
-    trackingState.activeSessionId = null;
-    trackingState.sessionState = SessionState.IDLE;
+
+    if (trackingState.activeSessionId && trackingState.activeSessionOwnerId) {
+      const cleanupResult = await completeBackendSession(
+        trackingState.activeSessionId,
+        trackingState.activeSessionOwnerId
+      );
+      if (cleanupResult.success) resetActiveTrackingState();
+      else trackingState.sessionState = SessionState.BACKEND_END_PENDING;
+    } else if (trackingState.activeSessionOwnerId) {
+      trackingState.sessionState = SessionState.BACKEND_CREATE_UNKNOWN;
+      trackingState.backendCleanupPending = true;
+      trackingState.recoveryReason = 'tracking_state_reconciliation_required';
+      return {
+        success: false,
+        reason: 'tracking_state_reconciliation_required',
+        error: error.message,
+        cleanupPending: true,
+        backendCleanupPending: true,
+        watcherCleanupPending: trackingState.watcherCleanupPending,
+        sessionId: trackingState.activeSessionId
+      };
+    } else {
+      trackingState.sessionState = SessionState.IDLE;
+    }
 
     return {
       success: false,
-      reason: 'unexpected_error',
-      error: error.message
+      reason: trackingState.backendCleanupPending
+        ? 'backend_cleanup_pending'
+        : 'unexpected_error',
+      error: error.message,
+      cleanupPending: trackingState.backendCleanupPending,
+      backendCleanupPending: trackingState.backendCleanupPending,
+      watcherCleanupPending: trackingState.watcherCleanupPending,
+      sessionId: trackingState.backendCleanupPending ? trackingState.activeSessionId : undefined
     };
+  } finally {
+    if (trackingState.startCompletionPromise === startCompletionPromise) {
+      trackingState.startCompletionPromise = null;
+    }
+    resolveStartCompletion();
   }
 }
 
@@ -407,7 +1649,87 @@ export async function startSafetySession(options = {}) {
  *
  * @returns {Promise<Object>} Stop result
  */
-export async function stopSafetySession() {
+export async function stopSafetySession({ skipBackendEnd = false } = {}) {
+  if (
+    trackingState.sessionState === SessionState.BACKEND_CREATE_UNKNOWN ||
+    trackingState.sessionState === SessionState.BACKEND_CREATE_CONFLICT ||
+    trackingState.sessionState === SessionState.WATCHER_RECONCILIATION_PENDING
+  ) {
+    if (!trackingState.activeSessionOwnerId) {
+      return {
+        success: false,
+        reason: trackingState.recoveryReason || 'tracking_state_reconciliation_required',
+        cleanupPending: true,
+        backendCleanupPending: trackingState.backendCleanupPending,
+        watcherCleanupPending: trackingState.watcherCleanupPending
+      };
+    }
+
+    if (!skipBackendEnd) {
+      const recovery = await recoverSafetySession(
+        trackingState.activeSessionOwnerId
+      );
+      return {
+        success: recovery.success,
+        reason: recovery.reason,
+        cleanupPending: !recovery.success,
+        backendCleanupPending: recovery.backendCleanupPending,
+        watcherCleanupPending: recovery.watcherCleanupPending,
+        sessionId: recovery.sessionId || trackingState.activeSessionId,
+        error: recovery.error
+      };
+    }
+
+    const result = await resolveStoredSessionCleanup(
+      trackingState.activeSessionOwnerId,
+      { skipBackendEnd }
+    );
+    return {
+      success: result.success,
+      reason: result.reason,
+      cleanupPending: !result.success,
+      backendCleanupPending: trackingState.backendCleanupPending,
+      watcherCleanupPending: trackingState.watcherCleanupPending,
+      sessionId: trackingState.activeSessionId,
+      error: result.error
+    };
+  }
+
+  if (trackingState.sessionState === SessionState.BACKEND_END_PENDING) {
+    const pendingSessionId = trackingState.activeSessionId;
+    const locationSyncPending = trackingState.locationSyncPending;
+    const cleanupResult = await completeBackendSession(
+      trackingState.activeSessionId,
+      trackingState.activeSessionOwnerId,
+      skipBackendEnd
+    );
+
+    if (cleanupResult.success) {
+      resetSessionState();
+      resetActiveTrackingState();
+      return {
+        success: true,
+        stoppedSessionId: pendingSessionId,
+        locationSyncPending
+      };
+    }
+
+    return {
+      success: false,
+      reason: cleanupResult.reason,
+      backendCleanupPending: true,
+      cleanupPending: true,
+      watcherStopped: true,
+      canLogout: cleanupResult.reason !== 'cleanup_persistence_failed',
+      locationSyncPending,
+      error: cleanupResult.error
+    };
+  }
+
+  if (trackingState.sessionState === SessionState.FAILED_WATCHER_STUCK) {
+    return await retryCleanup({ skipBackendEnd });
+  }
+
   // STEP 1: Validate state
   if (trackingState.sessionState !== SessionState.ACTIVE) {
     return {
@@ -424,12 +1746,34 @@ export async function stopSafetySession() {
 
   // Capture IDs before any async operations
   const sessionId = trackingState.activeSessionId;
+  const ownerId = trackingState.activeSessionOwnerId;
   const watcherId = trackingState.activeWatcherId;
+  const locationSyncPendingBeforeStop =
+    trackingState.locationSyncPending || trackingState.pendingLocationUpload !== null;
 
   // STEP 3: Invalidate callbacks FIRST
+  trackingState.acceptingLocationUploads = false;
+  trackingState.pendingLocationUpload = null;
   trackingState.callbackGeneration++;
   trackingState.watcherCallback = null;
   trackingState.earlyCallbackBuffer = [];
+
+  try {
+    await persistTrackingState('watcher_cleanup_pending', {
+      userId: ownerId,
+      sessionId,
+      watcherId,
+      backendEnded: false
+    });
+  } catch (error) {
+    console.error('Failed to persist stopping session state:', error);
+  }
+
+  if (trackingState.locationUploadPromise) {
+    await trackingState.locationUploadPromise;
+  }
+  const locationSyncPending =
+    locationSyncPendingBeforeStop || trackingState.locationSyncPending;
 
   // STEP 4: Attempt watcher removal
   let removalSucceeded = false;
@@ -445,35 +1789,53 @@ export async function stopSafetySession() {
     trackingState.stuckWatcherId = watcherId;
     trackingState.cleanupAttempts = 1;
     trackingState.cleanupStage = CleanupStage.WATCHER_REMOVAL_PENDING;
-
-    // Retain activeWatcherId and activeSessionId
+    trackingState.backendCleanupPending = true;
+    trackingState.watcherCleanupPending = true;
+    try {
+      await persistTrackingState('watcher_cleanup_pending');
+    } catch (storageError) {
+      console.error('Failed to persist session cleanup after watcher removal failure:', storageError);
+    }
 
     return {
       success: false,
       reason: 'watcher_removal_failed',
+      cleanupPending: true,
+      backendCleanupPending: true,
+      watcherCleanupPending: true,
       error: removeError.message,
       stuckWatcherId: watcherId,
       cleanupStage: trackingState.cleanupStage,
+      canLogout: false,
       note: 'Call retryCleanup() to retry removal'
     };
   }
 
-  // STEP 5: Reset permission manager state (after confirmed removal)
-  // NOTE: resetSessionState() cannot fail (always returns success: true)
-  const resetResult = resetSessionState();
+  trackingState.activeWatcherId = null;
+  trackingState.stuckWatcherId = null;
+  trackingState.watcherCleanupPending = false;
+  resetSessionState();
   trackingState.cleanupStage = CleanupStage.COMPLETE;
 
-  // STEP 6: Clear tracking state
-  trackingState.activeWatcherId = null;
-  trackingState.activeSessionId = null;
-  trackingState.sessionState = SessionState.IDLE;
-  trackingState.cleanupStage = CleanupStage.NONE;
+  const cleanupResult = await completeBackendSession(sessionId, ownerId, skipBackendEnd);
+  if (cleanupResult.success) {
+    resetActiveTrackingState();
+  } else {
+    trackingState.sessionState = SessionState.BACKEND_END_PENDING;
+  }
 
   return {
-    success: true,
+    success: cleanupResult.success,
+    reason: cleanupResult.reason,
+    cleanupPending: !cleanupResult.success,
     stoppedSessionId: sessionId,
     stoppedWatcherId: watcherId,
-    status: resetResult.status
+    backendCleanupPending: !cleanupResult.success,
+    watcherCleanupPending: false,
+    watcherStopped: true,
+    canLogout: cleanupResult.reason !== 'cleanup_persistence_failed',
+    locationSyncPending,
+    error: cleanupResult.error
   };
 }
 
@@ -483,7 +1845,7 @@ export async function stopSafetySession() {
  *
  * @returns {Promise<Object>} Retry result
  */
-export async function retryCleanup() {
+export async function retryCleanup({ skipBackendEnd = false } = {}) {
   // STEP 1: Validate state
   if (trackingState.sessionState !== SessionState.FAILED_WATCHER_STUCK) {
     return {
@@ -512,10 +1874,19 @@ export async function retryCleanup() {
     removalSucceeded = true;
   } catch (removeError) {
     console.error(`Cleanup retry ${attemptNumber} failed:`, removeError);
+    trackingState.watcherCleanupPending = true;
+    try {
+      await persistTrackingState('watcher_cleanup_pending');
+    } catch (persistenceError) {
+      console.error('Failed to persist watcher cleanup retry state:', persistenceError);
+    }
 
     return {
       success: false,
       reason: 'watcher_removal_still_failing',
+      cleanupPending: true,
+      backendCleanupPending: trackingState.backendCleanupPending,
+      watcherCleanupPending: true,
       error: removeError.message,
       attemptNumber,
       totalAttempts: trackingState.cleanupAttempts,
@@ -535,7 +1906,14 @@ export async function retryCleanup() {
     const originalFailureReason = trackingState.failureReason;
 
     // Reset permission manager state
-    const resetResult = resetSessionState();
+    const sessionId = trackingState.activeSessionId;
+    const ownerId = trackingState.activeSessionOwnerId;
+    trackingState.acceptingLocationUploads = false;
+    trackingState.pendingLocationUpload = null;
+    if (trackingState.locationUploadPromise) {
+      await trackingState.locationUploadPromise;
+    }
+    resetSessionState();
 
     // If this was a failure (not manual stop cleanup), notify after reset
     if (originalFailureReason) {
@@ -543,22 +1921,118 @@ export async function retryCleanup() {
     }
 
     // Clear all stuck state
-    trackingState.stuckWatcherId = null;
     trackingState.activeWatcherId = null;
-    trackingState.activeSessionId = null;
-    trackingState.failureReason = null;
-    trackingState.cleanupAttempts = 0;  // Reset AFTER capturing
-    trackingState.sessionState = SessionState.IDLE;
-    trackingState.cleanupStage = CleanupStage.NONE;
+    trackingState.stuckWatcherId = null;
+    trackingState.watcherCleanupPending = false;
+    const cleanupResult = await completeBackendSession(sessionId, ownerId, skipBackendEnd);
+    if (cleanupResult.success) resetActiveTrackingState();
+    else trackingState.sessionState = SessionState.BACKEND_END_PENDING;
 
     return {
-      success: true,
+      success: cleanupResult.success,
+      reason: cleanupResult.reason,
+      cleanupPending: !cleanupResult.success,
       removedWatcherId: watcherId,
       attemptNumber: totalAttempts,  // Report actual count
-      status: resetResult.status,
-      failureNotified: originalFailureReason !== null  // Indicate if failure was notified
+      status: getCurrentSessionStatus().status,
+      failureNotified: originalFailureReason !== null,  // Indicate if failure was notified
+      backendCleanupPending: !cleanupResult.success,
+      watcherCleanupPending: false,
+      watcherStopped: true,
+      canLogout: cleanupResult.reason !== 'cleanup_persistence_failed',
+      error: cleanupResult.error
     };
   }
+}
+
+export async function cleanupSafetySessionForLogout(userId, { unauthorized = false } = {}) {
+  const ownerId = userId ? String(userId) : '';
+
+  if (trackingState.recoveryPromise) {
+    await trackingState.recoveryPromise;
+  }
+
+  if (
+    trackingState.sessionState === SessionState.STARTING ||
+    trackingState.sessionState === SessionState.WATCHER_REGISTERING
+  ) {
+    trackingState.cancelStartRequested = true;
+    const pendingStart = trackingState.startCompletionPromise;
+    if (pendingStart) await pendingStart;
+  }
+
+  if (
+    (trackingState.sessionState === SessionState.BACKEND_CREATE_UNKNOWN ||
+      trackingState.sessionState === SessionState.BACKEND_CREATE_CONFLICT) &&
+    !trackingState.watcherCleanupPending
+  ) {
+    const reason = trackingState.recoveryReason ||
+      (trackingState.sessionState === SessionState.BACKEND_CREATE_CONFLICT
+        ? 'active_session_already_exists'
+        : 'backend_session_id_unknown');
+    const pendingCleanup = trackingState.backendCleanupPending;
+    resetActiveTrackingState();
+    return {
+      canLogout: true,
+      pendingCleanup,
+      reason
+    };
+  }
+
+  if (
+    trackingState.sessionState === SessionState.ACTIVE ||
+    trackingState.sessionState === SessionState.FAILED_WATCHER_STUCK ||
+    trackingState.sessionState === SessionState.BACKEND_END_PENDING ||
+    trackingState.sessionState === SessionState.BACKEND_CREATE_UNKNOWN ||
+    trackingState.sessionState === SessionState.WATCHER_RECONCILIATION_PENDING
+  ) {
+    const sameOwner = ownerId && trackingState.activeSessionOwnerId === ownerId;
+    const result = await stopSafetySession({
+      skipBackendEnd: unauthorized || !sameOwner
+    });
+    const canLogout = unauthorized
+      ? true
+      : result.canLogout === true ||
+        (result.success === true && !result.watcherCleanupPending);
+    if (canLogout && !result.watcherCleanupPending) {
+      resetActiveTrackingState();
+    }
+    return {
+      canLogout,
+      pendingCleanup:
+        result.backendCleanupPending === true ||
+        result.watcherCleanupPending === true,
+      reason: result.reason,
+      error: result.error
+    };
+  }
+
+  if (trackingState.sessionState !== SessionState.IDLE) {
+    return {
+      canLogout: false,
+      pendingCleanup: trackingState.backendCleanupPending,
+      reason: 'session_start_in_progress'
+    };
+  }
+
+  if (!ownerId) return { canLogout: true, pendingCleanup: false };
+
+  const pending = await storageService.getPendingSessionCleanup(ownerId);
+  if (!pending) return { canLogout: true, pendingCleanup: false };
+  if (unauthorized) return { canLogout: true, pendingCleanup: true };
+  if (!isValidBackendSessionId(pending.sessionId)) {
+    return {
+      canLogout: false,
+      pendingCleanup: true,
+      reason: 'invalid_pending_session_id'
+    };
+  }
+
+  trackingState.activeSessionId = pending.sessionId;
+  trackingState.activeSessionOwnerId = ownerId;
+  trackingState.backendCleanupPending = true;
+  trackingState.sessionState = SessionState.BACKEND_END_PENDING;
+  return await stopSafetySession();
 }
 
 /**
@@ -570,7 +2044,13 @@ export function getSafetySessionStatus() {
   return {
     sessionState: trackingState.sessionState,
     activeSessionId: trackingState.activeSessionId,
+    activeSessionOwnerId: trackingState.activeSessionOwnerId,
     activeWatcherId: trackingState.activeWatcherId,
+    backendCleanupPending: trackingState.backendCleanupPending,
+    backendSessionEnded: trackingState.backendSessionEnded,
+    watcherCleanupPending: trackingState.watcherCleanupPending,
+    recoveryReason: trackingState.recoveryReason,
+    locationSyncPending: trackingState.locationSyncPending,
     stuckWatcherId: trackingState.stuckWatcherId,
     failureReason: trackingState.failureReason,
     cleanupAttempts: trackingState.cleanupAttempts,
@@ -633,69 +2113,6 @@ function validateSessionOptions(options) {
     valid: errors.length === 0,
     errors
   };
-}
-
-/**
- * Generate cryptographically secure session ID
- * Format: session_<timestamp>_<uuid>
- *
- * Fallback chain:
- * 1. crypto.randomUUID() (WebView 92+)
- * 2. Custom UUID v4 using crypto.getRandomValues()
- * 3. Timestamp + Math.random() (not cryptographically secure)
- *
- * @returns {string} Session ID
- */
-function generateSessionId() {
-  const timestamp = Date.now();
-
-  // Try crypto.randomUUID() if available (WebView 92+)
-  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
-    try {
-      const uuid = crypto.randomUUID();
-      return `session_${timestamp}_${uuid}`;
-    } catch (error) {
-      console.warn('crypto.randomUUID() failed, using fallback:', error);
-    }
-  }
-
-  // Fallback: Custom UUID v4 using crypto.getRandomValues()
-  if (typeof crypto !== 'undefined' && typeof crypto.getRandomValues === 'function') {
-    try {
-      const uuid = generateUUIDv4();
-      return `session_${timestamp}_${uuid}`;
-    } catch (error) {
-      console.warn('crypto.getRandomValues() failed, using final fallback:', error);
-    }
-  }
-
-  // Final fallback: Timestamp + Math.random() (not cryptographically secure)
-  console.warn('Using non-cryptographic session ID generation');
-  const random1 = Math.random().toString(36).substring(2, 15);
-  const random2 = Math.random().toString(36).substring(2, 15);
-  return `session_${timestamp}_${random1}${random2}`;
-}
-
-/**
- * Generate UUID v4 using crypto.getRandomValues()
- * RFC 4122 compliant
- *
- * @returns {string} UUID v4
- */
-function generateUUIDv4() {
-  const bytes = new Uint8Array(16);
-  crypto.getRandomValues(bytes);
-
-  // Set version (4) and variant bits per RFC 4122
-  bytes[6] = (bytes[6] & 0x0f) | 0x40; // Version 4
-  bytes[8] = (bytes[8] & 0x3f) | 0x80; // Variant 10
-
-  // Convert to UUID string format
-  const hexString = Array.from(bytes)
-    .map(byte => byte.toString(16).padStart(2, '0'))
-    .join('');
-
-  return `${hexString.slice(0, 8)}-${hexString.slice(8, 12)}-${hexString.slice(12, 16)}-${hexString.slice(16, 20)}-${hexString.slice(20)}`;
 }
 
 /**
@@ -770,15 +2187,31 @@ function processBufferedCallbacks() {
 
   console.log('Processing', count, 'buffered callbacks');
 
-  // Process in original order
+  let latestLocation = null;
   for (const buffered of buffer) {
-    // Verify generation still valid (session not stopped during processing)
-    if (isCallbackStale(buffered.generation)) {
-      console.warn('Skipping buffered callback from stale generation');
+    if (buffered.error) {
+      if (!isCallbackStale(buffered.generation)) {
+        processLocationUpdate(buffered.location, buffered.error);
+      }
       continue;
     }
 
-    processLocationUpdate(buffered.location, buffered.error);
+    const locationTime = buffered.location?.time;
+    if (
+      Number.isSafeInteger(locationTime) &&
+      locationTime > 0 &&
+      (!latestLocation || locationTime > latestLocation.location.time)
+    ) {
+      latestLocation = buffered;
+    }
+  }
+
+  if (
+    latestLocation &&
+    !isCallbackStale(latestLocation.generation) &&
+    trackingState.sessionState === SessionState.ACTIVE
+  ) {
+    processLocationUpdate(latestLocation.location, undefined);
   }
 
   // Clear buffer and mark as processed
@@ -855,7 +2288,125 @@ function processLocationUpdate(location, error) {
       verified: recordResult.verified,
       timestamp
     });
-    // TODO Phase 6: Send to backend
+    queueLocationUpload(location, timestamp);
+  }
+}
+
+function queueLocationUpload(location, timestamp) {
+  if (
+    !trackingState.acceptingLocationUploads ||
+    trackingState.sessionState !== SessionState.ACTIVE ||
+    !trackingState.activeSessionId
+  ) {
+    return;
+  }
+
+  const { latitude, longitude } = location;
+  if (
+    typeof latitude !== 'number' ||
+    !Number.isFinite(latitude) ||
+    latitude < -90 ||
+    latitude > 90 ||
+    typeof longitude !== 'number' ||
+    !Number.isFinite(longitude) ||
+    longitude < -180 ||
+    longitude > 180
+  ) {
+    console.warn('Ignoring location with invalid coordinates');
+    return;
+  }
+
+  if (timestamp <= trackingState.lastQueuedLocationTimestamp) {
+    return;
+  }
+
+  trackingState.lastQueuedLocationTimestamp = timestamp;
+  trackingState.pendingLocationUpload = {
+    timestamp,
+    sessionId: trackingState.activeSessionId,
+    latitude,
+    longitude
+  };
+  startLocationUploadDrain();
+}
+
+function startLocationUploadDrain() {
+  if (trackingState.locationUploadPromise) return;
+
+  const drainPromise = drainLocationUploads();
+  trackingState.locationUploadPromise = drainPromise;
+  drainPromise.finally(() => {
+    if (trackingState.locationUploadPromise === drainPromise) {
+      trackingState.locationUploadPromise = null;
+    }
+    if (
+      trackingState.acceptingLocationUploads &&
+      trackingState.pendingLocationUpload
+    ) {
+      startLocationUploadDrain();
+    }
+  });
+}
+
+async function drainLocationUploads() {
+  while (
+    trackingState.acceptingLocationUploads &&
+    trackingState.sessionState === SessionState.ACTIVE &&
+    trackingState.pendingLocationUpload
+  ) {
+    const update = trackingState.pendingLocationUpload;
+    trackingState.pendingLocationUpload = null;
+    let uploadError = null;
+
+    for (let attempt = 0; attempt < 3; attempt++) {
+      if (
+        !trackingState.acceptingLocationUploads ||
+        trackingState.sessionState !== SessionState.ACTIVE ||
+        update.sessionId !== trackingState.activeSessionId
+      ) {
+        return;
+      }
+
+      try {
+        const response = await apiService.updateSessionLocation(update.sessionId, {
+          latitude: update.latitude,
+          longitude: update.longitude
+        });
+        if (!response?.success) {
+          throw new Error(response?.message || 'Backend did not confirm location update');
+        }
+
+        trackingState.lastUploadedLocationTimestamp = update.timestamp;
+        uploadError = null;
+        break;
+      } catch (error) {
+        uploadError = error;
+        if (error.status === 401 || (error.status >= 400 && error.status < 500)) {
+          break;
+        }
+        if (attempt < 2) {
+          await new Promise((resolve) => setTimeout(resolve, 750 * (attempt + 1)));
+        }
+      }
+    }
+
+    if (uploadError) {
+      trackingState.locationSyncPending = true;
+      dispatchLocationSyncState(true, uploadError.message);
+      console.error('Location sync pending after upload retries:', uploadError);
+      return;
+    }
+
+    trackingState.locationSyncPending = false;
+    dispatchLocationSyncState(false);
+  }
+}
+
+function dispatchLocationSyncState(pending, message) {
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('spheriva:location-sync-state', {
+      detail: { pending, message }
+    }));
   }
 }
 
@@ -909,22 +2460,29 @@ async function initiateFailureCleanup(reason) {
     trackingState.sessionState = SessionState.FAILED_PERMISSION_REVOKED;
 
     // STEP 3: Invalidate callback generation to prevent further processing
+    trackingState.acceptingLocationUploads = false;
+    trackingState.pendingLocationUpload = null;
     trackingState.callbackGeneration++;
     trackingState.watcherCallback = null;
     trackingState.earlyCallbackBuffer = [];
+    if (trackingState.locationUploadPromise) {
+      await trackingState.locationUploadPromise;
+    }
 
     // STEP 4: Attempt to remove watcher
     const watcherId = trackingState.activeWatcherId;
+    const sessionId = trackingState.activeSessionId;
+    const ownerId = trackingState.activeSessionOwnerId;
     if (!watcherId) {
-      // No watcher to remove (should not happen, but handle gracefully)
       console.warn('No active watcher during failure cleanup');
-      trackingState.activeSessionId = null;
-      trackingState.failureReason = null;  // Clear reason since we're notifying immediately
-      trackingState.sessionState = SessionState.IDLE;
-      trackingState.failureInProgress = false;
-
-      // Now safe to call notifySessionFailed
+      resetSessionState();
       notifySessionFailed(reason);
+      const cleanupResult = sessionId
+        ? await completeBackendSession(sessionId, ownerId)
+        : { success: true };
+      if (cleanupResult.success) resetActiveTrackingState();
+      else trackingState.sessionState = SessionState.BACKEND_END_PENDING;
+      trackingState.failureInProgress = false;
       return;
     }
 
@@ -939,6 +2497,18 @@ async function initiateFailureCleanup(reason) {
       trackingState.stuckWatcherId = watcherId;
       trackingState.cleanupAttempts = 1;
       trackingState.failureInProgress = false;
+      trackingState.backendCleanupPending = Boolean(sessionId);
+      trackingState.watcherCleanupPending = true;
+      try {
+        await persistTrackingState('watcher_cleanup_pending', {
+          userId: ownerId,
+          sessionId,
+          watcherId,
+          backendEnded: false
+        });
+      } catch (storageError) {
+        console.error('Failed to persist session cleanup after watcher failure:', storageError);
+      }
 
       // Cannot call notifySessionFailed yet - watcher still active
       console.error('Session failed but watcher is stuck - call retryCleanup()');
@@ -947,16 +2517,17 @@ async function initiateFailureCleanup(reason) {
 
     // STEP 4: Watcher removed successfully - reset permission state
     if (removalSucceeded) {
-      const resetResult = resetSessionState();
+      resetSessionState();
 
       // STEP 5: Call notifySessionFailed (after reset)
       notifySessionFailed(reason);
 
-      // STEP 6: Clear tracking state
       trackingState.activeWatcherId = null;
-      trackingState.activeSessionId = null;
-      trackingState.failureReason = null;  // Clear reason after successful notification
-      trackingState.sessionState = SessionState.IDLE;
+      const cleanupResult = sessionId
+        ? await completeBackendSession(sessionId, ownerId)
+        : { success: true };
+      if (cleanupResult.success) resetActiveTrackingState();
+      else trackingState.sessionState = SessionState.BACKEND_END_PENDING;
       trackingState.failureInProgress = false;
     }
   } catch (error) {
@@ -990,7 +2561,11 @@ function getStateTransitionGuidance(currentState) {
     [SessionState.ACTIVE]: 'Session already active - stop current session first with stopSafetySession()',
     [SessionState.STOPPING]: 'Session stop in progress - wait for completion',
     [SessionState.FAILED_WATCHER_STUCK]: 'Watcher removal failed - call retryCleanup() before starting new session',
-    [SessionState.FAILED_PERMISSION_REVOKED]: 'Permission revoked - cleanup in progress'
+    [SessionState.FAILED_PERMISSION_REVOKED]: 'Permission revoked - cleanup in progress',
+    [SessionState.BACKEND_END_PENDING]: 'Backend session ending is pending - retry cleanup before starting',
+    [SessionState.BACKEND_CREATE_UNKNOWN]: 'Backend session ID is unknown - resolve the pending server session before starting',
+    [SessionState.BACKEND_CREATE_CONFLICT]: 'An active session exists for this account - reconcile it before starting',
+    [SessionState.WATCHER_RECONCILIATION_PENDING]: 'Watcher ID is unavailable - native watcher reconciliation is required before starting'
   };
 
   return guidance[currentState] || 'Unknown state';

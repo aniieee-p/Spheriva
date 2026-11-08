@@ -20,9 +20,11 @@ export const API_CONFIG = {
     },
     SESSION: {
       CREATE: '/sessions',
+      ACTIVE: '/sessions/active',
       GET_ALL: '/sessions',
       GET_ONE: '/sessions/:id',
       UPDATE: '/sessions/:id',
+      LOCATION: '/sessions/:id/location',
       END: '/sessions/:id/end',
     },
     EMERGENCY: {

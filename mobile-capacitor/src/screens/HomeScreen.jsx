@@ -14,6 +14,8 @@ const HomeScreen = () => {
 
   // Session state
   const [sessionActive, setSessionActive] = useState(false);
+  const [cleanupPending, setCleanupPending] = useState(false);
+  const [locationSyncPending, setLocationSyncPending] = useState(false);
   const [sessionId, setSessionId] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -24,8 +26,32 @@ const HomeScreen = () => {
     const checkSessionStatus = () => {
       const status = getSafetySessionStatus();
       const isActive = status.sessionState === 'active';
+      setLocationSyncPending(status.locationSyncPending);
+      const needsCleanup =
+        status.backendCleanupPending ||
+        status.watcherCleanupPending ||
+        status.sessionState === 'backend_end_pending' ||
+        status.sessionState === 'failed_watcher_stuck' ||
+        status.sessionState === 'backend_create_unknown' ||
+        status.sessionState === 'watcher_reconciliation_pending';
       setSessionActive(isActive);
+      setCleanupPending(needsCleanup);
+      if (status.recoveryReason === 'backend_session_id_unknown') {
+        setError('A previous create request may have made a server session, but its ID is unavailable. The backend currently cannot look up that session.');
+      } else if (status.recoveryReason === 'active_session_already_exists') {
+        setError('An active safety session already exists for this account, possibly on another device. This device will not adopt or end it.');
+      } else if (status.recoveryReason === 'watcher_id_unavailable') {
+        setError('A previous native watcher may still exist, but the plugin cannot discover its ID. New sessions are blocked.');
+      } else if (status.recoveryReason === 'watcher_removal_failed') {
+        setError('Removing the previous native watcher failed. Retry cleanup before starting another session.');
+      } else if (status.recoveryReason === 'tracking_state_read_failed') {
+        setError('Saved tracking state could not be read. A new session is blocked until recovery succeeds.');
+      } else if (!needsCleanup) {
+        setError(null);
+      }
       if (isActive) {
+        setSessionId(status.activeSessionId);
+      } else if (needsCleanup) {
         setSessionId(status.activeSessionId);
       } else {
         setSessionId(null);
@@ -43,14 +69,23 @@ const HomeScreen = () => {
     };
 
     document.addEventListener('visibilitychange', handleVisibilityChange);
+    const handleLocationSyncState = (event) => {
+      setLocationSyncPending(event.detail?.pending === true);
+    };
+    window.addEventListener('spheriva:location-sync-state', handleLocationSyncState);
 
     return () => {
       document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('spheriva:location-sync-state', handleLocationSyncState);
     };
   }, []);
 
   const handleLogout = async () => {
-    await logout();
+    const result = await logout();
+    if (!result?.success) {
+      setError(result?.message || 'Tracking cleanup failed. Please retry before logging out.');
+      return;
+    }
     navigate('/login');
   };
 
@@ -61,6 +96,7 @@ const HomeScreen = () => {
 
     try {
       const result = await startSafetySession({
+        userId: user?.id || user?._id,
         backgroundMessage: `${user?.name || 'User'} is being tracked for safety`,
         backgroundTitle: 'Spheriva Safety Session Active',
         distanceFilter: 10 // Update every 10 meters
@@ -68,10 +104,17 @@ const HomeScreen = () => {
 
       if (result.success) {
         setSessionActive(true);
+        setCleanupPending(false);
         setSessionId(result.sessionId);
         setSuccessMessage('Safety session started successfully!');
         setTimeout(() => setSuccessMessage(null), 3000);
       } else {
+        setSessionActive(false);
+        const needsCleanup = result.cleanupPending === true ||
+          result.backendCleanupPending === true ||
+          result.watcherCleanupPending === true;
+        setCleanupPending(needsCleanup);
+        setSessionId(result.sessionId || null);
         // Handle specific error reasons
         let errorMsg = 'Failed to start safety session';
         if (result.reason === 'invalid_options') {
@@ -79,9 +122,18 @@ const HomeScreen = () => {
         } else if (result.reason === 'location_permission_denied') {
           errorMsg = 'Location permission is required. Please enable it in Settings.';
         } else if (result.reason === 'stuck_watcher_exists') {
-          errorMsg = 'Previous session cleanup required. Please try again.';
+          errorMsg = result.note || 'Previous session cleanup required. Please retry cleanup.';
         } else if (result.reason === 'invalid_state') {
-          errorMsg = `Cannot start session in current state: ${result.currentState}`;
+          errorMsg = result.note || `Cannot start session in current state: ${result.currentState}`;
+        } else if (result.reason === 'backend_create_result_unknown' ||
+                   result.reason === 'backend_session_id_unknown') {
+          errorMsg = 'The server may have created a session but its ID was not received. Another session is blocked until the backend can look it up.';
+        } else if (result.reason === 'watcher_id_unavailable') {
+          errorMsg = 'A previous watcher may still be running, but its ID was not saved and the plugin cannot list watchers. Do not start another session.';
+        } else if (result.watcherCleanupPending) {
+          errorMsg = 'Native watcher cleanup is pending. Retry cleanup before starting or logging out.';
+        } else if (result.backendCleanupPending) {
+          errorMsg = 'The session could not start and backend cleanup is pending. Retry cleanup before starting again.';
         } else {
           errorMsg = result.note || result.reason || errorMsg;
         }
@@ -89,6 +141,16 @@ const HomeScreen = () => {
       }
     } catch (err) {
       console.error('Error starting session:', err);
+      const status = getSafetySessionStatus();
+      const needsCleanup =
+        status.backendCleanupPending ||
+        status.watcherCleanupPending ||
+        status.sessionState === 'backend_create_unknown' ||
+        status.sessionState === 'watcher_reconciliation_pending' ||
+        status.sessionState === 'failed_watcher_stuck';
+      setSessionActive(status.sessionState === 'active');
+      setCleanupPending(needsCleanup);
+      setSessionId(needsCleanup ? status.activeSessionId : null);
       setError('Unexpected error: ' + err.message);
     } finally {
       setLoading(false);
@@ -105,15 +167,39 @@ const HomeScreen = () => {
 
       if (result.success) {
         setSessionActive(false);
+        setCleanupPending(false);
         setSessionId(null);
-        setSuccessMessage('Safety session stopped successfully!');
+        setLocationSyncPending(result.locationSyncPending === true);
+        setSuccessMessage(
+          result.locationSyncPending
+            ? 'Safety session ended, but the latest location could not be synced.'
+            : 'Safety session stopped successfully!'
+        );
         setTimeout(() => setSuccessMessage(null), 3000);
       } else {
+        setSessionActive(false);
+        const needsCleanup = result.cleanupPending === true ||
+          result.backendCleanupPending === true ||
+          result.watcherCleanupPending === true ||
+          result.reason === 'watcher_removal_failed';
+        setCleanupPending(needsCleanup);
+        setSessionId(needsCleanup ? (result.sessionId || result.stoppedSessionId || sessionId) : null);
+        if (result.locationSyncPending !== undefined) {
+          setLocationSyncPending(result.locationSyncPending);
+        }
         let errorMsg = 'Failed to stop safety session';
         if (result.reason === 'invalid_state') {
           errorMsg = `Cannot stop session in current state: ${result.currentState}`;
         } else if (result.reason === 'watcher_removal_failed') {
-          errorMsg = 'Session ended but cleanup pending. You can retry or restart the app.';
+          errorMsg = 'Tracking is still running because the watcher could not be removed. Retry cleanup before logging out.';
+        } else if (result.reason === 'watcher_id_unavailable') {
+          errorMsg = 'A previous native watcher may remain, but the plugin cannot discover its ID. New sessions remain blocked.';
+        } else if (result.reason === 'backend_session_id_unknown') {
+          errorMsg = 'The server may have created a session but the client did not receive its ID. Backend recovery is required before another session can start.';
+        } else if (result.watcherCleanupPending) {
+          errorMsg = 'Native watcher cleanup is still pending. Retry cleanup before starting another session.';
+        } else if (result.backendCleanupPending) {
+          errorMsg = 'Tracking stopped, but backend session cleanup is pending. Retry to confirm the session has ended.';
         } else {
           errorMsg = result.note || result.reason || errorMsg;
         }
@@ -121,6 +207,16 @@ const HomeScreen = () => {
       }
     } catch (err) {
       console.error('Error stopping session:', err);
+      const status = getSafetySessionStatus();
+      const needsCleanup =
+        status.backendCleanupPending ||
+        status.watcherCleanupPending ||
+        status.sessionState === 'backend_create_unknown' ||
+        status.sessionState === 'watcher_reconciliation_pending' ||
+        status.sessionState === 'failed_watcher_stuck';
+      setSessionActive(status.sessionState === 'active');
+      setCleanupPending(needsCleanup);
+      setSessionId(needsCleanup ? status.activeSessionId : null);
       setError('Unexpected error: ' + err.message);
     } finally {
       setLoading(false);
@@ -173,12 +269,12 @@ const HomeScreen = () => {
           )}
 
           {/* Active Session Info */}
-          {sessionActive && (
+          {(sessionActive || cleanupPending) && (
             <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
               <div className="flex items-center">
-                <div className="w-3 h-3 bg-green-500 rounded-full animate-pulse mr-2"></div>
+                <div className={`w-3 h-3 rounded-full mr-2 ${sessionActive ? 'bg-green-500 animate-pulse' : 'bg-amber-500'}`}></div>
                 <p className="text-sm font-medium text-blue-900">
-                  Session Active
+                  {sessionActive ? 'Session Active' : 'Session cleanup pending'}
                 </p>
               </div>
               {sessionId && (
@@ -188,10 +284,17 @@ const HomeScreen = () => {
               )}
             </div>
           )}
+          {locationSyncPending && (
+            <div role="status" className="mb-4 p-3 bg-amber-50 border border-amber-200 text-amber-800 rounded-lg text-sm">
+              {sessionActive
+                ? 'A location update could not sync. Tracking will continue and retry with a newer update.'
+                : 'The latest location could not sync before tracking stopped.'}
+            </div>
+          )}
 
           <div className="space-y-3">
             {/* Start/Stop Session Button */}
-            {!sessionActive ? (
+            {!sessionActive && !cleanupPending ? (
               <button
                 className="w-full bg-green-600 hover:bg-green-700 disabled:bg-gray-400 disabled:cursor-not-allowed text-white py-4 rounded-lg font-semibold transition shadow-lg flex items-center justify-center"
                 onClick={handleStartSession}
@@ -229,7 +332,7 @@ const HomeScreen = () => {
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 10a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1v-4z" />
                     </svg>
-                    Stop Safety Session
+                    {cleanupPending ? 'Retry Session Cleanup' : 'Stop Safety Session'}
                   </>
                 )}
               </button>
