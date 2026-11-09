@@ -4,6 +4,8 @@
  */
 
 import React, { createContext, useState, useContext, useEffect, useRef } from 'react';
+import { App } from '@capacitor/app';
+import { Network } from '@capacitor/network';
 import { apiService } from '../services/api.service';
 import { storageService } from '../services/storage.service';
 import {
@@ -18,8 +20,77 @@ export const AuthProvider = ({ children }) => {
   const [loading, setLoading] = useState(true);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const userRef = useRef(user);
+  const isAuthenticatedRef = useRef(isAuthenticated);
   const logoutPromiseRef = useRef(null);
+  const recoveryRetryPromiseRef = useRef(null);
+  const lastRecoveryAttemptAtRef = useRef(0);
+  const networkConnectedRef = useRef(null);
   userRef.current = user;
+  isAuthenticatedRef.current = isAuthenticated;
+
+  const setAuthenticationState = (authenticated) => {
+    isAuthenticatedRef.current = authenticated;
+    setIsAuthenticated(authenticated);
+  };
+
+  const recoverSafetySessionForUser = async (userId) => {
+    lastRecoveryAttemptAtRef.current = Date.now();
+    return await recoverSafetySession(userId);
+  };
+
+  const retrySafetySessionRecovery = async () => {
+    const ownerId = userRef.current?.id || userRef.current?._id;
+    if (
+      !ownerId ||
+      !isAuthenticatedRef.current ||
+      logoutPromiseRef.current
+    ) {
+      return;
+    }
+
+    if (recoveryRetryPromiseRef.current) {
+      return await recoveryRetryPromiseRef.current;
+    }
+
+    if (Date.now() - lastRecoveryAttemptAtRef.current < 10000) return;
+
+    const retryPromise = (async () => {
+      try {
+        const [token, storedUser] = await Promise.all([
+          storageService.getToken(),
+          storageService.getUser()
+        ]);
+        const currentOwnerId = userRef.current?.id || userRef.current?._id;
+        const storedOwnerId = storedUser?.id || storedUser?._id;
+        if (
+          !token ||
+          !isAuthenticatedRef.current ||
+          logoutPromiseRef.current ||
+          String(currentOwnerId || '') !== String(ownerId) ||
+          String(storedOwnerId || '') !== String(ownerId) ||
+          Date.now() - lastRecoveryAttemptAtRef.current < 10000
+        ) {
+          return;
+        }
+
+        const recovery = await recoverSafetySessionForUser(ownerId);
+        if (!recovery.success) {
+          console.warn('Safety session retry requires recovery:', recovery);
+        }
+      } catch (error) {
+        console.warn('Safety session retry failed:', error);
+      }
+    })();
+
+    recoveryRetryPromiseRef.current = retryPromise;
+    try {
+      return await retryPromise;
+    } finally {
+      if (recoveryRetryPromiseRef.current === retryPromise) {
+        recoveryRetryPromiseRef.current = null;
+      }
+    }
+  };
 
   useEffect(() => {
     const handleUnauthorized = () => {
@@ -29,6 +100,66 @@ export const AuthProvider = ({ children }) => {
     window.addEventListener('spheriva:unauthorized', handleUnauthorized);
     return () => {
       window.removeEventListener('spheriva:unauthorized', handleUnauthorized);
+    };
+  }, []);
+
+  useEffect(() => {
+    let disposed = false;
+    let networkListener;
+    let appStateListener;
+
+    const registerListeners = async () => {
+      try {
+        const listener = await Network.addListener(
+          'networkStatusChange',
+          (status) => {
+            const wasConnected = networkConnectedRef.current;
+            networkConnectedRef.current = status.connected;
+            if (status.connected && wasConnected !== true) {
+              void retrySafetySessionRecovery();
+            }
+          }
+        );
+        if (disposed) {
+          await listener.remove();
+          return;
+        }
+        networkListener = listener;
+      } catch (error) {
+        console.error('Failed to register network recovery listener:', error);
+      }
+
+      if (disposed) return;
+
+      try {
+        const listener = await App.addListener('appStateChange', (state) => {
+          if (state.isActive) {
+            void retrySafetySessionRecovery();
+          }
+        });
+        if (disposed) {
+          await listener.remove();
+          return;
+        }
+        appStateListener = listener;
+      } catch (error) {
+        console.error('Failed to register foreground recovery listener:', error);
+      }
+    };
+
+    void registerListeners();
+    return () => {
+      disposed = true;
+      if (networkListener) {
+        void networkListener.remove().catch((error) => {
+          console.error('Failed to remove network recovery listener:', error);
+        });
+      }
+      if (appStateListener) {
+        void appStateListener.remove().catch((error) => {
+          console.error('Failed to remove foreground recovery listener:', error);
+        });
+      }
     };
   }, []);
 
@@ -51,7 +182,8 @@ export const AuthProvider = ({ children }) => {
         const restoreStoredAuthentication = () => {
           userRef.current = storedUser;
           setUser(storedUser);
-          setIsAuthenticated(true);
+          setAuthenticationState(true);
+          void retrySafetySessionRecovery();
         };
 
         userRef.current = storedUser;
@@ -60,7 +192,7 @@ export const AuthProvider = ({ children }) => {
           if (response.success) {
             const authenticatedUser = response.data.user;
             userRef.current = authenticatedUser;
-            const recovery = await recoverSafetySession(
+            const recovery = await recoverSafetySessionForUser(
               authenticatedUser?.id || authenticatedUser?._id
             );
             if (!recovery.success) {
@@ -68,11 +200,12 @@ export const AuthProvider = ({ children }) => {
             }
             if (!(await storageService.getToken())) {
               setUser(null);
-              setIsAuthenticated(false);
+              userRef.current = null;
+              setAuthenticationState(false);
               return;
             }
             setUser(authenticatedUser);
-            setIsAuthenticated(true);
+            setAuthenticationState(true);
           } else {
             console.warn('Authentication restoration returned an unsuccessful response');
             restoreStoredAuthentication();
@@ -91,12 +224,14 @@ export const AuthProvider = ({ children }) => {
         }
       } else {
         setUser(null);
-        setIsAuthenticated(false);
+        userRef.current = null;
+        setAuthenticationState(false);
       }
     } catch (error) {
       console.error('Auth check error:', error);
       setUser(null);
-      setIsAuthenticated(false);
+      userRef.current = null;
+      setAuthenticationState(false);
     } finally {
       setLoading(false);
     }
@@ -113,7 +248,7 @@ export const AuthProvider = ({ children }) => {
         await storageService.saveToken(response.data.token);
         await storageService.saveUser(response.data.user);
         userRef.current = response.data.user;
-        const recovery = await recoverSafetySession(
+        const recovery = await recoverSafetySessionForUser(
           response.data.user?.id || response.data.user?._id
         );
         if (!recovery.success) {
@@ -127,7 +262,7 @@ export const AuthProvider = ({ children }) => {
         }
         
         setUser(response.data.user);
-        setIsAuthenticated(true);
+        setAuthenticationState(true);
         
         return { success: true, message: response.message };
       }
@@ -154,7 +289,7 @@ export const AuthProvider = ({ children }) => {
         await storageService.saveRememberMe(rememberMe);
 
         userRef.current = response.data.user;
-        const recovery = await recoverSafetySession(
+        const recovery = await recoverSafetySessionForUser(
           response.data.user?.id || response.data.user?._id
         );
         if (!recovery.success) {
@@ -168,7 +303,7 @@ export const AuthProvider = ({ children }) => {
         }
         
         setUser(response.data.user);
-        setIsAuthenticated(true);
+        setAuthenticationState(true);
         
         return { success: true, message: response.message };
       }
@@ -190,6 +325,9 @@ export const AuthProvider = ({ children }) => {
 
     const logoutPromise = (async () => {
       try {
+        if (recoveryRetryPromiseRef.current) {
+          await recoveryRetryPromiseRef.current;
+        }
         const currentUserId = userRef.current?.id || userRef.current?._id;
         const cleanup = await cleanupSafetySessionForLogout(currentUserId, {
           unauthorized
@@ -206,8 +344,8 @@ export const AuthProvider = ({ children }) => {
 
         await storageService.clearAuth();
         setUser(null);
-        setIsAuthenticated(false);
         userRef.current = null;
+        setAuthenticationState(false);
         return {
           success: true,
           pendingCleanup: cleanup.pendingCleanup
