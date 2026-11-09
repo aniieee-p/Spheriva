@@ -306,6 +306,52 @@ const resolveStoredSessionCleanup = async (userId, { skipBackendEnd = false } = 
   trackingState.backendCleanupPending = true;
   trackingState.watcherCleanupPending = false;
 
+  let watcherRemoved = false;
+  if (isUnownedSessionLifecycle(pending.lifecycleState) && pending.watcherId) {
+    try {
+      await BackgroundGeolocation.removeWatcher({ id: pending.watcherId });
+    } catch (error) {
+      trackingState.activeWatcherId = pending.watcherId;
+      trackingState.stuckWatcherId = pending.watcherId;
+      trackingState.sessionState = SessionState.FAILED_WATCHER_STUCK;
+      trackingState.watcherCleanupPending = true;
+      trackingState.recoveryReason = 'watcher_removal_failed';
+      return {
+        success: false,
+        found: true,
+        reason: 'watcher_removal_failed',
+        backendCleanupPending: true,
+        watcherCleanupPending: true,
+        sessionId: null,
+        error: error.message
+      };
+    }
+
+    watcherRemoved = true;
+    trackingState.activeWatcherId = null;
+    trackingState.stuckWatcherId = null;
+    try {
+      await storageService.saveSessionTrackingState(userId, {
+        ...pending,
+        watcherId: null
+      });
+    } catch (error) {
+      console.error('Could not persist watcher removal for unowned session:', error);
+      trackingState.sessionState = SessionState.BACKEND_CREATE_UNKNOWN;
+      trackingState.watcherCleanupPending = false;
+      trackingState.recoveryReason = 'backend_session_id_unknown';
+      return {
+        success: false,
+        found: true,
+        reason: 'cleanup_persistence_failed',
+        backendCleanupPending: true,
+        watcherCleanupPending: false,
+        sessionId: null,
+        error: error.message
+      };
+    }
+  }
+
   if (pending.lifecycleState === 'create_conflict') {
     trackingState.sessionState = SessionState.BACKEND_CREATE_CONFLICT;
     trackingState.recoveryReason = 'active_session_already_exists';
@@ -320,7 +366,8 @@ const resolveStoredSessionCleanup = async (userId, { skipBackendEnd = false } = 
   }
 
   if (isUnownedSessionLifecycle(pending.lifecycleState)) {
-    const watcherMayExist = pending.lifecycleState === 'server_session_watcher_unknown';
+    const watcherMayExist = !watcherRemoved &&
+      watcherMayExistForLifecycle(pending.lifecycleState);
     trackingState.sessionState = watcherMayExist
       ? SessionState.WATCHER_RECONCILIATION_PENDING
       : SessionState.BACKEND_CREATE_UNKNOWN;
@@ -1962,9 +2009,44 @@ export async function cleanupSafetySessionForLogout(userId, { unauthorized = fal
   }
 
   if (
+    ownerId &&
     (trackingState.sessionState === SessionState.BACKEND_CREATE_UNKNOWN ||
       trackingState.sessionState === SessionState.BACKEND_CREATE_CONFLICT) &&
-    !trackingState.watcherCleanupPending
+    !trackingState.watcherCleanupPending &&
+    !trackingState.activeWatcherId &&
+    !trackingState.stuckWatcherId
+  ) {
+    const persisted = await storageService.getPendingSessionCleanup(ownerId);
+    if (persisted && (
+      persisted.watcherId ||
+      watcherMayExistForLifecycle(persisted.lifecycleState)
+    )) {
+      trackingState.activeSessionOwnerId = ownerId;
+      trackingState.activeSessionId = isUnownedSessionLifecycle(persisted.lifecycleState)
+        ? null
+        : persisted.sessionId || null;
+      trackingState.activeWatcherId = persisted.watcherId || null;
+      trackingState.backendCleanupPending = true;
+      trackingState.watcherCleanupPending = true;
+      trackingState.sessionState = persisted.watcherId
+        ? persisted.lifecycleState === 'create_conflict'
+          ? SessionState.BACKEND_CREATE_CONFLICT
+          : SessionState.BACKEND_CREATE_UNKNOWN
+        : SessionState.WATCHER_RECONCILIATION_PENDING;
+      trackingState.recoveryReason = persisted.watcherId
+        ? persisted.lifecycleState === 'create_conflict'
+          ? 'active_session_already_exists'
+          : 'backend_session_id_unknown'
+        : 'watcher_id_unavailable';
+    }
+  }
+
+  if (
+    (trackingState.sessionState === SessionState.BACKEND_CREATE_UNKNOWN ||
+      trackingState.sessionState === SessionState.BACKEND_CREATE_CONFLICT) &&
+    !trackingState.watcherCleanupPending &&
+    !trackingState.activeWatcherId &&
+    !trackingState.stuckWatcherId
   ) {
     const reason = trackingState.recoveryReason ||
       (trackingState.sessionState === SessionState.BACKEND_CREATE_CONFLICT
@@ -1984,16 +2066,23 @@ export async function cleanupSafetySessionForLogout(userId, { unauthorized = fal
     trackingState.sessionState === SessionState.FAILED_WATCHER_STUCK ||
     trackingState.sessionState === SessionState.BACKEND_END_PENDING ||
     trackingState.sessionState === SessionState.BACKEND_CREATE_UNKNOWN ||
+    trackingState.sessionState === SessionState.BACKEND_CREATE_CONFLICT ||
     trackingState.sessionState === SessionState.WATCHER_RECONCILIATION_PENDING
   ) {
     const sameOwner = ownerId && trackingState.activeSessionOwnerId === ownerId;
     const result = await stopSafetySession({
       skipBackendEnd: unauthorized || !sameOwner
     });
-    const canLogout = unauthorized
-      ? true
-      : result.canLogout === true ||
-        (result.success === true && !result.watcherCleanupPending);
+    const watcherCleanupFailed =
+      result.watcherCleanupPending === true ||
+      result.reason === 'watcher_removal_failed' ||
+      result.reason === 'watcher_removal_still_failing';
+    const canLogout = !watcherCleanupFailed && (
+      unauthorized
+        ? result.canLogout !== false && result.reason !== 'cleanup_persistence_failed'
+        : result.canLogout === true ||
+          (result.success === true && !result.watcherCleanupPending)
+    );
     if (canLogout && !result.watcherCleanupPending) {
       resetActiveTrackingState();
     }
@@ -2019,6 +2108,80 @@ export async function cleanupSafetySessionForLogout(userId, { unauthorized = fal
 
   const pending = await storageService.getPendingSessionCleanup(ownerId);
   if (!pending) return { canLogout: true, pendingCleanup: false };
+
+  const pendingWatcherId = pending.watcherId;
+  const watcherMayExistWithoutId = !pendingWatcherId &&
+    watcherMayExistForLifecycle(pending.lifecycleState);
+  if (pendingWatcherId) {
+    try {
+      await BackgroundGeolocation.removeWatcher({ id: pendingWatcherId });
+    } catch (error) {
+      trackingState.activeSessionOwnerId = ownerId;
+      trackingState.activeSessionId = isUnownedSessionLifecycle(pending.lifecycleState)
+        ? null
+        : pending.sessionId || null;
+      trackingState.activeWatcherId = pendingWatcherId;
+      trackingState.stuckWatcherId = pendingWatcherId;
+      trackingState.backendCleanupPending = true;
+      trackingState.watcherCleanupPending = true;
+      trackingState.sessionState = SessionState.FAILED_WATCHER_STUCK;
+      trackingState.recoveryReason = 'watcher_removal_failed';
+      console.error('Could not remove persisted safety session watcher before logout:', error);
+      return {
+        canLogout: false,
+        pendingCleanup: true,
+        reason: 'watcher_removal_failed',
+        error: error.message
+      };
+    }
+    try {
+      await storageService.saveSessionTrackingState(ownerId, {
+        ...pending,
+        watcherId: null,
+        lifecycleState: isUnownedSessionLifecycle(pending.lifecycleState)
+          ? pending.lifecycleState
+          : 'backend_cleanup_pending'
+      });
+    } catch (error) {
+      console.error('Could not persist watcher removal before logout:', error);
+      trackingState.activeSessionOwnerId = ownerId;
+      trackingState.activeSessionId = isUnownedSessionLifecycle(pending.lifecycleState)
+        ? null
+        : pending.sessionId || null;
+      trackingState.activeWatcherId = null;
+      trackingState.stuckWatcherId = null;
+      trackingState.backendCleanupPending = true;
+      trackingState.watcherCleanupPending = false;
+      trackingState.sessionState = pending.lifecycleState === 'create_conflict'
+        ? SessionState.BACKEND_CREATE_CONFLICT
+        : isUnownedSessionLifecycle(pending.lifecycleState)
+          ? SessionState.BACKEND_CREATE_UNKNOWN
+          : SessionState.BACKEND_END_PENDING;
+      trackingState.recoveryReason = 'cleanup_persistence_failed';
+      return {
+        canLogout: false,
+        pendingCleanup: true,
+        reason: 'cleanup_persistence_failed',
+        error: error.message
+      };
+    }
+  } else if (watcherMayExistWithoutId) {
+    trackingState.activeSessionOwnerId = ownerId;
+    trackingState.activeSessionId = isUnownedSessionLifecycle(pending.lifecycleState)
+      ? null
+      : pending.sessionId || null;
+    trackingState.activeWatcherId = null;
+    trackingState.backendCleanupPending = true;
+    trackingState.watcherCleanupPending = true;
+    trackingState.sessionState = SessionState.WATCHER_RECONCILIATION_PENDING;
+    trackingState.recoveryReason = 'watcher_id_unavailable';
+    return {
+      canLogout: false,
+      pendingCleanup: true,
+      reason: 'watcher_id_unavailable'
+    };
+  }
+
   if (unauthorized) return { canLogout: true, pendingCleanup: true };
   if (!isValidBackendSessionId(pending.sessionId)) {
     return {

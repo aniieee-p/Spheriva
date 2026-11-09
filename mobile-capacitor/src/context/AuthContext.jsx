@@ -3,9 +3,13 @@
  * Manages authentication state across the application
  */
 
-import React, { createContext, useState, useContext, useEffect } from 'react';
+import React, { createContext, useState, useContext, useEffect, useRef } from 'react';
 import { apiService } from '../services/api.service';
 import { storageService } from '../services/storage.service';
+import {
+  cleanupSafetySessionForLogout,
+  recoverSafetySession
+} from '../services/trackingService';
 
 const AuthContext = createContext(null);
 
@@ -13,6 +17,20 @@ export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const userRef = useRef(user);
+  const logoutPromiseRef = useRef(null);
+  userRef.current = user;
+
+  useEffect(() => {
+    const handleUnauthorized = () => {
+      void logout({ unauthorized: true });
+    };
+
+    window.addEventListener('spheriva:unauthorized', handleUnauthorized);
+    return () => {
+      window.removeEventListener('spheriva:unauthorized', handleUnauthorized);
+    };
+  }, []);
 
   // Initialize auth state on app load
   useEffect(() => {
@@ -30,10 +48,24 @@ export const AuthProvider = ({ children }) => {
       const storedUser = await storageService.getUser();
 
       if (token && storedUser) {
+        userRef.current = storedUser;
         try {
           const response = await apiService.getMe();
           if (response.success) {
-            setUser(response.data.user);
+            const authenticatedUser = response.data.user;
+            userRef.current = authenticatedUser;
+            const recovery = await recoverSafetySession(
+              authenticatedUser?.id || authenticatedUser?._id
+            );
+            if (!recovery.success) {
+              console.warn('Safety session requires recovery:', recovery);
+            }
+            if (!(await storageService.getToken())) {
+              setUser(null);
+              setIsAuthenticated(false);
+              return;
+            }
+            setUser(authenticatedUser);
             setIsAuthenticated(true);
           } else {
             await logout();
@@ -64,6 +96,19 @@ export const AuthProvider = ({ children }) => {
       if (response.success) {
         await storageService.saveToken(response.data.token);
         await storageService.saveUser(response.data.user);
+        userRef.current = response.data.user;
+        const recovery = await recoverSafetySession(
+          response.data.user?.id || response.data.user?._id
+        );
+        if (!recovery.success) {
+          console.warn('Safety session requires recovery:', recovery);
+        }
+        if (!(await storageService.getToken())) {
+          return {
+            success: false,
+            message: 'Authentication expired while recovering the safety session'
+          };
+        }
         
         setUser(response.data.user);
         setIsAuthenticated(true);
@@ -91,6 +136,20 @@ export const AuthProvider = ({ children }) => {
         await storageService.saveToken(response.data.token);
         await storageService.saveUser(response.data.user);
         await storageService.saveRememberMe(rememberMe);
+
+        userRef.current = response.data.user;
+        const recovery = await recoverSafetySession(
+          response.data.user?.id || response.data.user?._id
+        );
+        if (!recovery.success) {
+          console.warn('Safety session requires recovery:', recovery);
+        }
+        if (!(await storageService.getToken())) {
+          return {
+            success: false,
+            message: 'Authentication expired while recovering the safety session'
+          };
+        }
         
         setUser(response.data.user);
         setIsAuthenticated(true);
@@ -110,13 +169,49 @@ export const AuthProvider = ({ children }) => {
   /**
    * Logout user
    */
-  const logout = async () => {
+  const logout = async ({ unauthorized = false } = {}) => {
+    if (logoutPromiseRef.current) return await logoutPromiseRef.current;
+
+    const logoutPromise = (async () => {
+      try {
+        const currentUserId = userRef.current?.id || userRef.current?._id;
+        const cleanup = await cleanupSafetySessionForLogout(currentUserId, {
+          unauthorized
+        });
+
+        if (!cleanup.canLogout) {
+          return {
+            success: false,
+            message: 'Tracking cleanup failed. Please retry before logging out.',
+            pendingCleanup: cleanup.pendingCleanup,
+            reason: cleanup.reason
+          };
+        }
+
+        await storageService.clearAuth();
+        setUser(null);
+        setIsAuthenticated(false);
+        userRef.current = null;
+        return {
+          success: true,
+          pendingCleanup: cleanup.pendingCleanup
+        };
+      } catch (error) {
+        console.error('Logout cleanup error:', error);
+        return {
+          success: false,
+          message: error.message || 'Could not complete logout cleanup'
+        };
+      }
+    })();
+
+    logoutPromiseRef.current = logoutPromise;
     try {
-      await storageService.clearAll();
-      setUser(null);
-      setIsAuthenticated(false);
-    } catch (error) {
-      console.error('Logout error:', error);
+      return await logoutPromise;
+    } finally {
+      if (logoutPromiseRef.current === logoutPromise) {
+        logoutPromiseRef.current = null;
+      }
     }
   };
 

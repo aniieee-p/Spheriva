@@ -103,7 +103,11 @@ const ProfileScreen = () => {
   };
 
   const handleLogout = async () => {
-    await logout();
+    const result = await logout();
+    if (!result?.success) {
+      setServerError(result?.message || 'Tracking cleanup failed. Please retry before logging out.');
+      return;
+    }
     navigate('/login', { replace: true });
   };
 
