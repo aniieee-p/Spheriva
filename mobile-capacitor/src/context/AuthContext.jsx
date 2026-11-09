@@ -48,6 +48,12 @@ export const AuthProvider = ({ children }) => {
       const storedUser = await storageService.getUser();
 
       if (token && storedUser) {
+        const restoreStoredAuthentication = () => {
+          userRef.current = storedUser;
+          setUser(storedUser);
+          setIsAuthenticated(true);
+        };
+
         userRef.current = storedUser;
         try {
           const response = await apiService.getMe();
@@ -68,10 +74,20 @@ export const AuthProvider = ({ children }) => {
             setUser(authenticatedUser);
             setIsAuthenticated(true);
           } else {
-            await logout();
+            console.warn('Authentication restoration returned an unsuccessful response');
+            restoreStoredAuthentication();
           }
         } catch (error) {
-          await logout();
+          if (error.status === 401) {
+            await logout();
+            return;
+          }
+
+          console.warn(
+            'Could not verify stored authentication; preserving the local session:',
+            error
+          );
+          restoreStoredAuthentication();
         }
       } else {
         setUser(null);
