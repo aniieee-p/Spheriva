@@ -8,6 +8,7 @@ import LoginScreen from './screens/LoginScreen';
 import RegisterScreen from './screens/RegisterScreen';
 import HomeScreen from './screens/HomeScreen';
 import ProfileScreen from './screens/ProfileScreen';
+import SessionHistoryScreen from './screens/SessionHistoryScreen';
 import TrustedContactsScreen from './screens/TrustedContactsScreen';
 
 function App() {
@@ -27,6 +28,7 @@ function App() {
             }
           >
             <Route path="/home" element={<HomeScreen />} />
+            <Route path="/history" element={<SessionHistoryScreen />} />
             <Route path="/profile" element={<ProfileScreen />} />
             <Route path="/contacts" element={<TrustedContactsScreen />} />
           </Route>
