@@ -29,7 +29,7 @@ const safetySessionSchema = new mongoose.Schema({
 
 // Ek user ka ek hi active session ho sakta hai (database level par bhi)
 safetySessionSchema.index(
-  { user: 1 },
+  { user: 1, status: 1 },
   { unique: true, partialFilterExpression: { status: 'active' } }
 );
 
