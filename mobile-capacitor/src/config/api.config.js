@@ -5,7 +5,7 @@
 
 export const API_CONFIG = {
   // Base URL from environment variable with fallback
-  BASE_URL: import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000/api',
+  BASE_URL: import.meta.env.VITE_API_BASE_URL || 'https://spheriva-backend.onrender.com/api',
   
   // Timeout for requests (ms)
   TIMEOUT: 30000,
@@ -20,9 +20,11 @@ export const API_CONFIG = {
     },
     SESSION: {
       CREATE: '/sessions',
+      ACTIVE: '/sessions/active',
       GET_ALL: '/sessions',
       GET_ONE: '/sessions/:id',
       UPDATE: '/sessions/:id',
+      LOCATION: '/sessions/:id/location',
       END: '/sessions/:id/end',
     },
     EMERGENCY: {

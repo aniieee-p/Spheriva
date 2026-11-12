@@ -63,9 +63,6 @@ const connectDB = require('./config/database');
 
 const app = express();
 
-// Connect to MongoDB
-connectDB();
-
 // Middleware
 app.use(cors());
 app.use(express.json());
@@ -80,7 +77,7 @@ app.get('/health', (req, res) => {
   });
 });
 
-// API Routes (will be added in subsequent phases)
+// API Routes
 app.use('/api/auth', require('./routes/auth.routes'));
 app.use('/api/emergency/contacts', require('./routes/contact.routes'));
 app.use('/api/sessions', require('./routes/session.routes'));
@@ -105,9 +102,20 @@ app.use((req, res) => {
 
 const PORT = process.env.PORT || 5000;
 
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
-  console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
-});
+const startServer = async () => {
+  await connectDB();
+
+  return app.listen(PORT, () => {
+    console.log(`Server running on port ${PORT}`);
+    console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
+  });
+};
+
+if (require.main === module) {
+  startServer().catch((error) => {
+    console.error('Backend startup failed; server will not accept requests:', error);
+    process.exitCode = 1;
+  });
+}
 
 module.exports = app;

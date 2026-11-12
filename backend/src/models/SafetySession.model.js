@@ -1,36 +1,63 @@
 const mongoose = require('mongoose');
 
-const locationPointSchema = new mongoose.Schema({
-  lat: { type: Number, required: true, min: -90, max: 90 },
-  lng: { type: Number, required: true, min: -180, max: 180 },
-  accuracy: { type: Number },
-  recordedAt: { type: Date, default: Date.now }
-}, { _id: false });
+const locationSchema = new mongoose.Schema({
+  latitude: {
+    type: Number,
+    required: true,
+    min: -90,
+    max: 90
+  },
+  longitude: {
+    type: Number,
+    required: true,
+    min: -180,
+    max: 180
+  },
+  timestamp: {
+    type: Date,
+    required: true
+  }
+}, {
+  _id: false
+});
 
 const safetySessionSchema = new mongoose.Schema({
   user: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User',
-    required: true,
-    index: true
+    required: true
   },
   status: {
     type: String,
     enum: ['active', 'ended'],
-    default: 'active'
+    default: 'active',
+    required: true
   },
-  startedAt: { type: Date, default: Date.now },
-  endedAt: { type: Date },
-  locations: [locationPointSchema],
-  lastLocation: { type: locationPointSchema }
+  startedAt: {
+    type: Date,
+    default: Date.now,
+    required: true
+  },
+  endedAt: {
+    type: Date,
+    default: null
+  },
+  latestLocation: {
+    type: locationSchema,
+    default: null
+  }
 }, {
-  timestamps: true
+  timestamps: true,
+  autoIndex: false
 });
 
-// Ek user ka ek hi active session ho sakta hai (database level par bhi)
 safetySessionSchema.index(
-  { user: 1, status: 1 },
-  { unique: true, partialFilterExpression: { status: 'active' } }
+  { user: 1 },
+  {
+    unique: true,
+    name: 'one_active_session_per_user',
+    partialFilterExpression: { status: 'active' }
+  }
 );
 
 module.exports = mongoose.model('SafetySession', safetySessionSchema);
