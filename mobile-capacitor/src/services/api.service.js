@@ -53,11 +53,16 @@ apiClient.interceptors.response.use(
       });
     }
 
-    // Network error
+    // No response received: timeout or network error
     if (error.request) {
+      const timedOut =
+        error.code === 'ECONNABORTED' || /timeout/i.test(error.message || '');
       return Promise.reject({
         status: 0,
-        message: 'Network error. Please check your connection.',
+        code: error.code,
+        message: timedOut
+          ? 'The server is taking too long to respond. It may be waking up, please try again in a minute.'
+          : 'Network error. Please check your connection.',
       });
     }
 

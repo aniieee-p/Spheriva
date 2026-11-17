@@ -8,7 +8,7 @@ export const API_CONFIG = {
   BASE_URL: import.meta.env.VITE_API_BASE_URL || 'https://spheriva-backend.onrender.com/api',
   
   // Timeout for requests (ms)
-  TIMEOUT: 30000,
+  TIMEOUT: 90000,
   
   // API endpoints
   ENDPOINTS: {
