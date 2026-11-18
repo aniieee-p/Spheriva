@@ -8,6 +8,7 @@ import LoginScreen from './screens/LoginScreen';
 import RegisterScreen from './screens/RegisterScreen';
 import HomeScreen from './screens/HomeScreen';
 import TrustedContactsScreen from './screens/TrustedContactsScreen';
+import ProfileScreen from './screens/ProfileScreen';
 
 function App() {
   return (
@@ -37,6 +38,15 @@ function App() {
               </ProtectedRoute>
             }
           />
+
+<Route
+  path="/profile"
+  element={
+    <ProtectedRoute>
+      <ProfileScreen />
+    </ProtectedRoute>
+  }
+/>
 
           {/* Unknown Routes */}
           <Route path="*" element={<Navigate to="/" replace />} />
