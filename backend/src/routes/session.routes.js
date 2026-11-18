@@ -17,6 +17,6 @@ router.get('/active', getActiveSession);
 router.post('/', createSession);
 router.post('/:id/location', updateLocation);
 router.patch('/:id/end', endSession);
-router.post('/:id/end', endSession);
+//router.post('/:id/end', endSession);
 
 module.exports = router;
