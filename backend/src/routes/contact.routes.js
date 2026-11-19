@@ -1,22 +1,21 @@
 const express = require('express');
-const router = express.Router();
+
 const {
-  getContacts,
   addContact,
+  getContacts,
   updateContact,
   deleteContact
 } = require('../controllers/contact.controller');
+
 const { protect } = require('../middleware/auth.middleware');
 
-// Saare contact routes protected hain
+const router = express.Router();
+
 router.use(protect);
 
-router.route('/')
-  .get(getContacts)
-  .post(addContact);
-
-router.route('/:id')
-  .put(updateContact)
-  .delete(deleteContact);
+router.post('/', addContact);
+router.get('/', getContacts);
+router.patch('/:id', updateContact);
+router.delete('/:id', deleteContact);
 
 module.exports = router;
