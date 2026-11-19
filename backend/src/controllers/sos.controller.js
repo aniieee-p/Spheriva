@@ -2,6 +2,10 @@ const mongoose = require('mongoose');
 const SOSAlert = require('../models/SOSAlert.model');
 const SafetySession = require('../models/SafetySession.model');
 
+const {
+  generateLocalEmergencyMessage
+} = require('../services/ai.service');
+
 const isValidObjectId = (id) => mongoose.Types.ObjectId.isValid(id);
 
 /**
@@ -16,7 +20,8 @@ const createSOS = async (req, res) => {
       latitude,
       longitude,
       accuracy,
-      clientRequestId
+      clientRequestId,
+      situation
     } = req.body || {};
 
     // Duplicate request protection
@@ -70,11 +75,37 @@ const createSOS = async (req, res) => {
           }
         : undefined;
 
+    // Generate emergency message
+    const userName = req.user.name || 'The user';
+
+    const emergencySituation =
+      situation?.trim() || 'User has triggered an SOS alert';
+
+    const locationText =
+      typeof latitude === 'number' && typeof longitude === 'number'
+        ? `${latitude}, ${longitude}`
+        : 'Location unavailable';
+
+    let aiEmergencyMessage;
+
+    try {
+      aiEmergencyMessage = generateLocalEmergencyMessage({
+        userName,
+        situation: emergencySituation,
+        location: locationText
+      });
+    } catch (aiError) {
+      console.error('Emergency message generation failed:', aiError);
+      aiEmergencyMessage = null;
+    }
+
+    // Create SOS alert
     const alert = await SOSAlert.create({
       user: req.user._id,
       session: session ? session._id : null,
       location,
-      clientRequestId: clientRequestId || undefined
+      clientRequestId: clientRequestId || undefined,
+      aiEmergencyMessage
     });
 
     return res.status(201).json({

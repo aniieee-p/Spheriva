@@ -33,6 +33,11 @@ const sosAlertSchema = new mongoose.Schema({
   // Mobile har SOS ke saath ek unique id bhejega, retry par duplicate alert na bane
   clientRequestId: { type: String, trim: true, maxlength: 100 },
   // Trusted contact ko dashboard link isi token se milta hai
+  aiEmergencyMessage: {
+  type: String,
+  trim: true,
+  maxlength: 500
+},
   shareToken: {
     type: String,
     unique: true,
