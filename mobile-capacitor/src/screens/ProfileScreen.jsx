@@ -1,11 +1,7 @@
-/**
- * Profile Screen
- * Shows the logged-in user's details and lets them edit name, email and phone.
- */
-
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import { apiService } from '../services/api.service';
 import { validateName, validateEmail, validatePhone } from '../utils/validation';
 
 const FIELDS = [
@@ -23,29 +19,58 @@ const ProfileScreen = () => {
   const navigate = useNavigate();
   const { user, updateUser, logout } = useAuth();
 
-  const [editing, setEditing] = useState(false);
-  const [form, setForm] = useState({ name: '', email: '', phoneNumber: '' });
+  const [profile, setProfile] = useState(user || {});
+  const [form, setForm] = useState({
+    name: user?.name || '',
+    email: user?.email || '',
+    phoneNumber: user?.phoneNumber || '',
+  });
+
   const [errors, setErrors] = useState({});
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [editing, setEditing] = useState(false);
   const [serverError, setServerError] = useState('');
   const [success, setSuccess] = useState('');
-  const [saving, setSaving] = useState(false);
-
-  const fillForm = () =>
-    setForm({
-      name: user?.name || '',
-      email: user?.email || '',
-      phoneNumber: user?.phoneNumber || '',
-    });
 
   useEffect(() => {
-    fillForm();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user]);
+    const loadProfile = async () => {
+      try {
+        setLoading(true);
+        setServerError('');
+
+        const response = await apiService.getMe();
+        const currentUser = response?.data?.user;
+
+        if (!currentUser) {
+          throw new Error('Profile details could not be loaded.');
+        }
+
+        setProfile(currentUser);
+        setForm({
+          name: currentUser.name || '',
+          email: currentUser.email || '',
+          phoneNumber: currentUser.phoneNumber || '',
+        });
+      } catch (err) {
+        setServerError(err.message || 'Unable to load profile.');
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    loadProfile();
+  }, []);
 
   const handleChange = (e) => {
     const { name, value } = e.target;
+
     setForm((prev) => ({ ...prev, [name]: value }));
-    if (errors[name]) setErrors((prev) => ({ ...prev, [name]: '' }));
+
+    if (errors[name]) {
+      setErrors((prev) => ({ ...prev, [name]: '' }));
+    }
+
     setServerError('');
   };
 
@@ -57,7 +82,11 @@ const ProfileScreen = () => {
   };
 
   const cancelEdit = () => {
-    fillForm();
+    setForm({
+      name: profile.name || '',
+      email: profile.email || '',
+      phoneNumber: profile.phoneNumber || '',
+    });
     setErrors({});
     setServerError('');
     setEditing(false);
@@ -71,16 +100,22 @@ const ProfileScreen = () => {
       email: validateEmail(form.email),
       phoneNumber: validatePhone(form.phoneNumber),
     };
+
     setErrors(newErrors);
+
     if (Object.values(newErrors).some(Boolean)) return;
 
-    // Sirf wahi fields bhejo jo badli hain
     const changes = {};
-    if (form.name.trim() !== (user?.name || '')) changes.name = form.name.trim();
-    if (form.email.trim().toLowerCase() !== (user?.email || '').toLowerCase()) {
+
+    if (form.name.trim() !== (profile.name || '')) {
+      changes.name = form.name.trim();
+    }
+
+    if (form.email.trim().toLowerCase() !== (profile.email || '').toLowerCase()) {
       changes.email = form.email.trim();
     }
-    if (form.phoneNumber.trim() !== (user?.phoneNumber || '')) {
+
+    if (form.phoneNumber.trim() !== (profile.phoneNumber || '')) {
       changes.phoneNumber = form.phoneNumber.trim();
     }
 
@@ -89,54 +124,90 @@ const ProfileScreen = () => {
       return;
     }
 
-    setSaving(true);
-    setServerError('');
-    const result = await updateUser(changes);
-    setSaving(false);
+    try {
+      setSaving(true);
+      setServerError('');
+      setSuccess('');
 
-    if (result.success) {
+      const result = await updateUser(changes);
+
+      if (!result?.success) {
+        throw new Error(result?.message || 'Profile update failed.');
+      }
+
+      const updatedProfile = { ...profile, ...changes };
+
+      setProfile(updatedProfile);
+      setForm({
+        name: updatedProfile.name || '',
+        email: updatedProfile.email || '',
+        phoneNumber: updatedProfile.phoneNumber || '',
+      });
+
       setEditing(false);
-      setSuccess('Profile updated successfully');
-    } else {
-      setServerError(result.message || 'Update failed. Please try again.');
+      setSuccess('Profile updated successfully!');
+    } catch (err) {
+      setServerError(err.message || 'Unable to update profile.');
+    } finally {
+      setSaving(false);
     }
   };
 
   const handleLogout = async () => {
-    const result = await logout();
-    if (!result?.success) {
-      setServerError(result?.message || 'Tracking cleanup failed. Please retry before logging out.');
-      return;
+    try {
+      const result = await logout();
+
+      if (!result?.success) {
+        setServerError(
+          result?.message || 'Unable to logout. Please try again.'
+        );
+        return;
+      }
+
+      navigate('/login', { replace: true });
+    } catch (err) {
+      setServerError(err.message || 'Unable to logout.');
     }
-    navigate('/login', { replace: true });
   };
 
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-100">
+        <p className="text-gray-600 font-medium">Loading profile...</p>
+      </div>
+    );
+  }
+
   return (
-    <div>
+    <div className="min-h-screen bg-gray-100">
       <div className="bg-gradient-to-r from-blue-600 to-purple-600 text-white p-6 shadow-lg">
-        <h1 className="text-2xl font-bold">Profile</h1>
-        <p className="text-sm opacity-90">Your account details</p>
+        <h1 className="text-2xl font-bold">My Profile</h1>
+        <p className="text-sm opacity-90">Manage your personal information</p>
       </div>
 
-      <div className="p-4">
+      <div className="p-4 max-w-xl mx-auto">
         <div className="bg-white rounded-xl shadow-md p-6">
-          <div className="flex items-center mb-6">
-            <div className="w-14 h-14 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center text-2xl font-bold">
-              {(user?.name || 'U').charAt(0).toUpperCase()}
+          <div className="flex items-center gap-4 mb-6">
+            <div className="w-16 h-16 rounded-full bg-blue-100 text-blue-700 flex items-center justify-center text-2xl font-bold">
+              {(profile.name || 'U').charAt(0).toUpperCase()}
             </div>
-            <div className="ml-4">
-              <p className="text-lg font-bold text-gray-800">{user?.name || 'User'}</p>
-              <p className="text-sm text-gray-500">{user?.email}</p>
+
+            <div>
+              <h2 className="text-xl font-bold text-gray-800">
+                {profile.name || 'User'}
+              </h2>
+              <p className="text-sm text-gray-500">Spheriva Member</p>
             </div>
           </div>
 
           {success && (
-            <div role="status" className="mb-4 p-3 bg-green-100 border border-green-400 text-green-700 rounded-lg text-sm">
+            <div role="status" className="mb-4 p-3 bg-green-100 text-green-700 rounded-lg text-sm">
               {success}
             </div>
           )}
+
           {serverError && (
-            <div role="alert" className="mb-4 p-3 bg-red-100 border border-red-400 text-red-700 rounded-lg text-sm">
+            <div role="alert" className="mb-4 p-3 bg-red-100 text-red-700 rounded-lg text-sm">
               {serverError}
             </div>
           )}
@@ -144,9 +215,13 @@ const ProfileScreen = () => {
           <form onSubmit={handleSave} noValidate className="space-y-4">
             {FIELDS.map((field) => (
               <div key={field.name}>
-                <label htmlFor={field.name} className="block text-sm font-medium text-gray-700 mb-1">
+                <label
+                  htmlFor={field.name}
+                  className="block text-sm font-medium text-gray-700 mb-1"
+                >
                   {field.label}
                 </label>
+
                 {editing ? (
                   <>
                     <input
@@ -156,34 +231,51 @@ const ProfileScreen = () => {
                       value={form[field.name]}
                       onChange={handleChange}
                       placeholder={field.placeholder}
-                      maxLength={field.name === 'phoneNumber' ? 10 : undefined}
+                      maxLength={field.name === 'phoneNumber' ? 10 : field.name === 'name' ? 50 : undefined}
                       disabled={saving}
                       className={inputClass(errors[field.name])}
                     />
+
                     {errors[field.name] && (
-                      <p className="mt-1 text-sm text-red-600">{errors[field.name]}</p>
+                      <p className="mt-1 text-sm text-red-600">
+                        {errors[field.name]}
+                      </p>
                     )}
                   </>
                 ) : (
-                  <p className="px-1 py-2 text-gray-800">{user?.[field.name] || '-'}</p>
+                  <p className="px-1 py-2 text-gray-800">
+                    {profile[field.name] || '-'}
+                  </p>
                 )}
               </div>
             ))}
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Account Created
+              </label>
+              <p className="px-1 py-2 text-gray-600">
+                {profile.createdAt
+                  ? new Date(profile.createdAt).toLocaleDateString()
+                  : 'Not available'}
+              </p>
+            </div>
 
             {editing ? (
               <div className="flex gap-3 pt-2">
                 <button
                   type="submit"
                   disabled={saving}
-                  className="flex-1 bg-blue-600 text-white py-3 rounded-lg font-semibold hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition"
+                  className="flex-1 bg-blue-600 text-white py-3 rounded-lg font-semibold hover:bg-blue-700 disabled:bg-gray-400"
                 >
-                  {saving ? 'Saving...' : 'Save changes'}
+                  {saving ? 'Saving...' : 'Save Changes'}
                 </button>
+
                 <button
                   type="button"
                   onClick={cancelEdit}
                   disabled={saving}
-                  className="flex-1 bg-gray-100 text-gray-700 py-3 rounded-lg font-semibold hover:bg-gray-200 transition"
+                  className="flex-1 bg-gray-100 text-gray-700 py-3 rounded-lg font-semibold hover:bg-gray-200"
                 >
                   Cancel
                 </button>
@@ -192,9 +284,9 @@ const ProfileScreen = () => {
               <button
                 type="button"
                 onClick={startEdit}
-                className="w-full bg-blue-600 text-white py-3 rounded-lg font-semibold hover:bg-blue-700 transition"
+                className="w-full bg-blue-600 text-white py-3 rounded-lg font-semibold hover:bg-blue-700"
               >
-                Edit profile
+                Edit Profile
               </button>
             )}
           </form>
@@ -203,7 +295,7 @@ const ProfileScreen = () => {
         <button
           type="button"
           onClick={handleLogout}
-          className="w-full mt-4 bg-white border border-red-300 text-red-600 py-3 rounded-lg font-semibold hover:bg-red-50 transition"
+          className="w-full mt-4 bg-white border border-red-300 text-red-600 py-3 rounded-lg font-semibold hover:bg-red-50"
         >
           Logout
         </button>
