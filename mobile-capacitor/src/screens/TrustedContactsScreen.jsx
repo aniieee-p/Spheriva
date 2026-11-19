@@ -1,228 +1,208 @@
 
-import React, { useState, useEffect } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { apiService } from '../services/api.service';
+import { validateName, validatePhone } from '../utils/validation';
+
+const MAX_CONTACTS = 3;
+const RELATIONSHIPS = ['Family', 'Friend', 'Parent', 'Sibling', 'Partner', 'Other'];
+const EMPTY_FORM = { name: '', phoneNumber: '', relationship: 'Family' };
+
+const inputClass = (hasError) =>
+  `w-full border rounded-lg p-3 focus:outline-none focus:ring-2 focus:ring-purple-500 ${
+    hasError ? 'border-red-500' : 'border-gray-300'
+  }`;
 
 const TrustedContactsScreen = () => {
   const navigate = useNavigate();
-  const MAX_CONTACTS = 3;
 
   const [contacts, setContacts] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState(null);
+  const [form, setForm] = useState(EMPTY_FORM);
   const [errors, setErrors] = useState({});
-  const [loading, setLoading] = useState(true);
+  const [banner, setBanner] = useState(null);
   const [saving, setSaving] = useState(false);
-  const [apiError, setApiError] = useState('');
+  const [deletingId, setDeletingId] = useState(null);
 
-  const [formData, setFormData] = useState({
-    name: '',
-    phoneNumber: '',
-    relationship: 'Family',
-  });
+  const limitReached = contacts.length >= MAX_CONTACTS;
 
-  // Load contacts from backend
-  useEffect(() => {
-    const loadContacts = async () => {
-      try {
-        setLoading(true);
-        setApiError('');
+  const loadContacts = useCallback(async () => {
+    try {
+      setLoading(true);
+      setLoadError('');
 
-        const response = await apiService.getEmergencyContacts();
-        setContacts(response?.data?.contacts || []);
-      } catch (error) {
-        console.error('Error loading trusted contacts:', error);
-        setApiError(error.message || 'Unable to load contacts.');
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    loadContacts();
+      const response = await apiService.getEmergencyContacts();
+      setContacts(response?.data?.contacts || []);
+    } catch (error) {
+      setLoadError(error.message || 'Could not load contacts.');
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
-  const handleChange = (e) => {
-    const { name, value } = e.target;
+  useEffect(() => {
+    loadContacts();
+  }, [loadContacts]);
 
-    setFormData((prev) => ({
-      ...prev,
-      [name]: value,
-    }));
-
-    setErrors((prev) => ({
-      ...prev,
-      [name]: '',
-      general: '',
-    }));
-
-    setApiError('');
-  };
-
-  // Form validation
-  const validateForm = () => {
-    const newErrors = {};
-
-    const name = formData.name.trim();
-    const phone = formData.phoneNumber.trim();
-
-    if (!name) {
-      newErrors.name = 'Name is required';
-    }
-
-    if (!/^[6-9]\d{9}$/.test(phone)) {
-      newErrors.phoneNumber =
-        'Enter a valid 10-digit Indian mobile number';
-    } else {
-      const isDuplicate = contacts.some(
-        (contact) =>
-          contact.phoneNumber.trim() === phone &&
-          contact._id !== editingId
-      );
-
-      if (isDuplicate) {
-        newErrors.phoneNumber =
-          'This phone number is already added';
-      }
-    }
-
-    if (
-      editingId === null &&
-      contacts.length >= MAX_CONTACTS
-    ) {
-      newErrors.general =
-        'You can add a maximum of 3 trusted contacts';
-    }
-
-    setErrors(newErrors);
-    return Object.keys(newErrors).length === 0;
-  };
-
-  // Add or update contact
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-
-    if (!validateForm()) return;
-
-    const contactData = {
-      name: formData.name.trim(),
-      phoneNumber: formData.phoneNumber.trim(),
-      relationship: formData.relationship,
-    };
-
-    try {
-      setSaving(true);
-      setApiError('');
-
-      if (editingId !== null) {
-        const response = await apiService.updateEmergencyContact(
-          editingId,
-          contactData
-        );
-
-        const updatedContact = response?.data?.contact;
-
-        if (!updatedContact) {
-          throw new Error('Updated contact was not returned by server.');
-        }
-
-        setContacts((prev) =>
-          prev.map((contact) =>
-            contact._id === editingId ? updatedContact : contact
-          )
-        );
-      } else {
-        const response = await apiService.addEmergencyContact(contactData);
-        const newContact = response?.data?.contact;
-
-        if (!newContact) {
-          throw new Error('New contact was not returned by server.');
-        }
-
-        setContacts((prev) => [...prev, newContact]);
-      }
-
-      resetForm();
-    } catch (error) {
-      console.error('Error saving contact:', error);
-      setApiError(error.message || 'Unable to save contact.');
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  // Reset form
   const resetForm = () => {
-    setFormData({
-      name: '',
-      phoneNumber: '',
-      relationship: 'Family',
-    });
-
+    setForm(EMPTY_FORM);
     setErrors({});
     setEditingId(null);
     setShowForm(false);
   };
 
-  // Open add contact form
-  const handleAdd = () => {
-    if (contacts.length >= MAX_CONTACTS || loading) return;
+  const openAdd = () => {
+    if (limitReached || loading) return;
 
+    setBanner(null);
+    setForm(EMPTY_FORM);
+    setErrors({});
     setEditingId(null);
-    setFormData({
-      name: '',
-      phoneNumber: '',
-      relationship: 'Family',
-    });
-
-    setErrors({});
-    setApiError('');
     setShowForm(true);
   };
 
-  // Edit contact
-  const handleEdit = (contact) => {
-    setFormData({
-      name: contact.name,
-      phoneNumber: contact.phoneNumber,
-      relationship: contact.relationship,
+  const openEdit = (contact) => {
+    setBanner(null);
+    setForm({
+      name: contact.name || '',
+      phoneNumber: contact.phoneNumber || '',
+      relationship: contact.relationship || 'Family',
     });
-
+    setErrors({});
     setEditingId(contact._id);
-    setErrors({});
-    setApiError('');
     setShowForm(true);
   };
 
-  // Delete contact
-  const handleDelete = async (id) => {
+  const handleChange = (e) => {
+    const { name, value } = e.target;
+
+    setForm((prev) => ({ ...prev, [name]: value }));
+
+    if (errors[name]) {
+      setErrors((prev) => ({ ...prev, [name]: '' }));
+    }
+
+    setBanner(null);
+  };
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+
+    const phone = form.phoneNumber.trim();
+
+    const newErrors = {
+      name: validateName(form.name),
+      phoneNumber: validatePhone(form.phoneNumber),
+    };
+
+    if (
+      !newErrors.phoneNumber &&
+      contacts.some(
+        (contact) =>
+          contact.phoneNumber.trim() === phone &&
+          contact._id !== editingId
+      )
+    ) {
+      newErrors.phoneNumber = 'This number is already in your contacts.';
+    }
+
+    if (editingId === null && limitReached) {
+      newErrors.general = 'You can add a maximum of 3 trusted contacts.';
+    }
+
+    setErrors(newErrors);
+
+    if (Object.values(newErrors).some(Boolean)) return;
+
+    const payload = {
+      name: form.name.trim(),
+      phoneNumber: phone,
+      relationship: form.relationship,
+    };
+
+    try {
+      setSaving(true);
+      setBanner(null);
+
+      if (editingId !== null) {
+        const response = await apiService.updateEmergencyContact(
+          editingId,
+          payload
+        );
+
+        const updated = response?.data?.contact;
+
+        if (!updated) {
+          throw new Error('Updated contact was not returned by server.');
+        }
+
+        setContacts((prev) =>
+          prev.map((contact) =>
+            contact._id === editingId ? updated : contact
+          )
+        );
+
+        setBanner({ type: 'success', text: 'Contact updated successfully.' });
+      } else {
+        const response = await apiService.addEmergencyContact(payload);
+        const added = response?.data?.contact;
+
+        if (!added) {
+          throw new Error('New contact was not returned by server.');
+        }
+
+        setContacts((prev) => [...prev, added]);
+        setBanner({ type: 'success', text: 'Contact added successfully.' });
+      }
+
+      resetForm();
+    } catch (error) {
+      setBanner({
+        type: 'error',
+        text: error.message || 'Could not save contact.',
+      });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleDelete = async (contact) => {
     const confirmed = window.confirm(
-      'Are you sure you want to delete this contact?'
+      `Remove ${contact.name} from your trusted contacts?`
     );
 
     if (!confirmed) return;
 
     try {
-      setApiError('');
+      setDeletingId(contact._id);
+      setBanner(null);
 
-      await apiService.deleteEmergencyContact(id);
+      await apiService.deleteEmergencyContact(contact._id);
 
       setContacts((prev) =>
-        prev.filter((contact) => contact._id !== id)
+        prev.filter((item) => item._id !== contact._id)
       );
 
-      if (editingId === id) {
+      if (editingId === contact._id) {
         resetForm();
       }
+
+      setBanner({ type: 'success', text: 'Contact removed successfully.' });
     } catch (error) {
-      console.error('Error deleting contact:', error);
-      setApiError(error.message || 'Unable to delete contact.');
+      setBanner({
+        type: 'error',
+        text: error.message || 'Could not remove contact.',
+      });
+    } finally {
+      setDeletingId(null);
     }
   };
 
   return (
-    <div className="min-h-screen bg-gray-100">
-
-      {/* Header */}
+    <div>
       <header className="bg-gradient-to-r from-blue-600 to-purple-600 text-white p-6 shadow-lg">
         <div className="max-w-3xl mx-auto flex items-center gap-4">
           <button
@@ -234,9 +214,7 @@ const TrustedContactsScreen = () => {
           </button>
 
           <div>
-            <h1 className="text-2xl font-bold">
-              Trusted Contacts
-            </h1>
+            <h1 className="text-2xl font-bold">Trusted Contacts</h1>
             <p className="text-sm opacity-90">
               People who can help you in an emergency
             </p>
@@ -245,47 +223,55 @@ const TrustedContactsScreen = () => {
       </header>
 
       <main className="max-w-3xl mx-auto p-4 sm:p-6">
-
-        {/* API Error */}
-        {apiError && (
-          <div className="bg-red-100 border border-red-300 text-red-700 rounded-lg p-3 mb-5">
-            {apiError}
+        {banner && (
+          <div
+            role={banner.type === 'error' ? 'alert' : 'status'}
+            className={`mb-4 p-3 rounded-lg text-sm border ${
+              banner.type === 'error'
+                ? 'bg-red-100 border-red-400 text-red-700'
+                : 'bg-green-100 border-green-400 text-green-700'
+            }`}
+          >
+            {banner.text}
           </div>
         )}
 
-        {/* Safety Network */}
         <div className="bg-white rounded-xl shadow-md p-5 mb-5">
           <h2 className="text-lg font-bold text-gray-800 mb-2">
             Your Safety Network
           </h2>
 
           <p className="text-sm text-gray-600">
-            Add people you trust. They can be contacted during an
-            emergency once the emergency alert feature is connected.
+            Add up to {MAX_CONTACTS} people you trust. They can be contacted
+            during an emergency once the emergency alert feature is connected.
           </p>
 
           <div className="mt-4 flex justify-between items-center gap-3">
             <span className="text-sm text-gray-600">
-              Total contacts:{' '}
-              <strong>{contacts.length}/{MAX_CONTACTS}</strong>
+              Contacts: <strong>{contacts.length}/{MAX_CONTACTS}</strong>
             </span>
 
             <button
-              onClick={handleAdd}
-              disabled={contacts.length >= MAX_CONTACTS || loading}
-              className="bg-purple-600 hover:bg-purple-700 disabled:bg-gray-400 disabled:cursor-not-allowed text-white px-4 py-2 rounded-lg font-medium"
+              onClick={openAdd}
+              disabled={limitReached || loading || showForm}
+              className="bg-purple-600 hover:bg-purple-700 disabled:bg-gray-300 disabled:cursor-not-allowed text-white px-4 py-2 rounded-lg font-medium"
             >
-              {contacts.length >= MAX_CONTACTS
-                ? 'Maximum 3 Reached'
-                : '+ Add Contact'}
+              + Add Contact
             </button>
           </div>
+
+          {limitReached && (
+            <p className="mt-3 text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-3">
+              You have reached the maximum of {MAX_CONTACTS} contacts. Remove
+              one to add a new contact.
+            </p>
+          )}
         </div>
 
-        {/* Add / Edit Form */}
         {showForm && (
           <form
             onSubmit={handleSubmit}
+            noValidate
             className="bg-white rounded-xl shadow-md p-5 mb-5"
           >
             <h2 className="text-lg font-bold text-gray-800 mb-4">
@@ -293,47 +279,52 @@ const TrustedContactsScreen = () => {
             </h2>
 
             {errors.general && (
-              <p className="text-red-600 text-sm mb-3">
-                {errors.general}
-              </p>
+              <p className="text-red-600 text-sm mb-3">{errors.general}</p>
             )}
 
-            {/* Name */}
             <div className="mb-4">
-              <label className="block text-sm font-medium text-gray-700 mb-1">
+              <label
+                htmlFor="name"
+                className="block text-sm font-medium text-gray-700 mb-1"
+              >
                 Full Name
               </label>
 
               <input
+                id="name"
                 type="text"
                 name="name"
-                value={formData.name}
+                value={form.name}
                 onChange={handleChange}
                 placeholder="Enter contact name"
-                className="w-full border border-gray-300 rounded-lg p-3 focus:outline-none focus:ring-2 focus:ring-purple-500"
+                maxLength={50}
+                disabled={saving}
+                className={inputClass(errors.name)}
               />
 
               {errors.name && (
-                <p className="text-red-600 text-sm mt-1">
-                  {errors.name}
-                </p>
+                <p className="text-red-600 text-sm mt-1">{errors.name}</p>
               )}
             </div>
 
-            {/* Phone Number */}
             <div className="mb-4">
-              <label className="block text-sm font-medium text-gray-700 mb-1">
+              <label
+                htmlFor="phoneNumber"
+                className="block text-sm font-medium text-gray-700 mb-1"
+              >
                 Phone Number
               </label>
 
               <input
+                id="phoneNumber"
                 type="tel"
                 name="phoneNumber"
-                value={formData.phoneNumber}
+                value={form.phoneNumber}
                 onChange={handleChange}
                 maxLength={10}
                 placeholder="10-digit mobile number"
-                className="w-full border border-gray-300 rounded-lg p-3 focus:outline-none focus:ring-2 focus:ring-purple-500"
+                disabled={saving}
+                className={inputClass(errors.phoneNumber)}
               />
 
               {errors.phoneNumber && (
@@ -343,36 +334,38 @@ const TrustedContactsScreen = () => {
               )}
             </div>
 
-            {/* Relationship */}
             <div className="mb-5">
-              <label className="block text-sm font-medium text-gray-700 mb-1">
+              <label
+                htmlFor="relationship"
+                className="block text-sm font-medium text-gray-700 mb-1"
+              >
                 Relationship
               </label>
 
               <select
+                id="relationship"
                 name="relationship"
-                value={formData.relationship}
+                value={form.relationship}
                 onChange={handleChange}
-                className="w-full border border-gray-300 rounded-lg p-3 focus:outline-none focus:ring-2 focus:ring-purple-500"
+                disabled={saving}
+                className={inputClass(false)}
               >
-                <option>Family</option>
-                <option>Friend</option>
-                <option>Parent</option>
-                <option>Sibling</option>
-                <option>Partner</option>
-                <option>Other</option>
+                {RELATIONSHIPS.map((item) => (
+                  <option key={item} value={item}>
+                    {item}
+                  </option>
+                ))}
               </select>
             </div>
 
-            {/* Form Buttons */}
             <div className="flex gap-3">
               <button
                 type="submit"
                 disabled={saving}
-                className="flex-1 bg-purple-600 hover:bg-purple-700 disabled:bg-gray-400 text-white py-3 rounded-lg font-semibold"
+                className="flex-1 bg-purple-600 hover:bg-purple-700 disabled:bg-gray-400 disabled:cursor-not-allowed text-white py-3 rounded-lg font-semibold"
               >
                 {saving
-                  ? 'Please wait...'
+                  ? 'Saving...'
                   : editingId !== null
                     ? 'Update Contact'
                     : 'Save Contact'}
@@ -390,24 +383,32 @@ const TrustedContactsScreen = () => {
           </form>
         )}
 
-        {/* Saved Contacts */}
         <section className="bg-white rounded-xl shadow-md p-5">
           <h2 className="text-lg font-bold text-gray-800 mb-4">
             Saved Contacts
           </h2>
 
           {loading ? (
-            <p className="text-center text-gray-500 py-8">
-              Loading contacts...
-            </p>
+            <div className="text-center py-10 text-gray-500">
+              <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-purple-600" />
+              <p className="mt-3 text-sm">Loading contacts...</p>
+            </div>
+          ) : loadError ? (
+            <div className="text-center py-8">
+              <p className="text-red-600 text-sm mb-3">{loadError}</p>
+              <button
+                onClick={loadContacts}
+                className="px-4 py-2 rounded-lg bg-purple-600 text-white text-sm font-medium hover:bg-purple-700"
+              >
+                Try again
+              </button>
+            </div>
           ) : contacts.length === 0 ? (
             <div className="text-center py-10">
               <div className="text-5xl mb-3">👥</div>
-
               <h3 className="font-semibold text-gray-700">
                 No trusted contacts yet
               </h3>
-
               <p className="text-sm text-gray-500 mt-2">
                 Add your first trusted contact to build your safety network.
               </p>
@@ -423,11 +424,9 @@ const TrustedContactsScreen = () => {
                     <h3 className="font-semibold text-gray-800">
                       {contact.name}
                     </h3>
-
                     <p className="text-sm text-gray-600">
                       {contact.phoneNumber}
                     </p>
-
                     <span className="inline-block mt-2 text-xs bg-purple-100 text-purple-700 px-3 py-1 rounded-full">
                       {contact.relationship}
                     </span>
@@ -435,17 +434,19 @@ const TrustedContactsScreen = () => {
 
                   <div className="flex gap-2">
                     <button
-                      onClick={() => handleEdit(contact)}
-                      className="px-4 py-2 rounded-lg bg-blue-50 text-blue-700 hover:bg-blue-100 text-sm font-medium"
+                      onClick={() => openEdit(contact)}
+                      disabled={deletingId === contact._id || saving}
+                      className="px-4 py-2 rounded-lg bg-blue-50 text-blue-700 hover:bg-blue-100 disabled:opacity-50 text-sm font-medium"
                     >
                       Edit
                     </button>
 
                     <button
-                      onClick={() => handleDelete(contact._id)}
-                      className="px-4 py-2 rounded-lg bg-red-50 text-red-700 hover:bg-red-100 text-sm font-medium"
+                      onClick={() => handleDelete(contact)}
+                      disabled={deletingId === contact._id || saving}
+                      className="px-4 py-2 rounded-lg bg-red-50 text-red-700 hover:bg-red-100 disabled:opacity-50 text-sm font-medium"
                     >
-                      Delete
+                      {deletingId === contact._id ? 'Removing...' : 'Delete'}
                     </button>
                   </div>
                 </div>
@@ -453,7 +454,6 @@ const TrustedContactsScreen = () => {
             </div>
           )}
         </section>
-
       </main>
     </div>
   );

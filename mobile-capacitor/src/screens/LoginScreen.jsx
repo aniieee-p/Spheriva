@@ -6,6 +6,7 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import { validateEmailOrPhone, validatePassword } from '../utils/validation';
 
 const LoginScreen = () => {
   const navigate = useNavigate();
@@ -19,6 +20,7 @@ const LoginScreen = () => {
   
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [fieldErrors, setFieldErrors] = useState({});
 
   const handleChange = (e) => {
     const { name, value, type, checked } = e.target;
@@ -27,13 +29,20 @@ const LoginScreen = () => {
       [name]: type === 'checkbox' ? checked : value,
     }));
     setError('');
+    if (fieldErrors[name]) {
+      setFieldErrors(prev => ({ ...prev, [name]: '' }));
+    }
   };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     
-    if (!formData.emailOrPhone || !formData.password) {
-      setError('Please fill in all fields');
+    const errors = {
+      emailOrPhone: validateEmailOrPhone(formData.emailOrPhone),
+      password: validatePassword(formData.password),
+    };
+    setFieldErrors(errors);
+    if (errors.emailOrPhone || errors.password) {
       return;
     }
 
@@ -41,7 +50,10 @@ const LoginScreen = () => {
     setError('');
 
     try {
-      const result = await login(formData);
+      const result = await login({
+        ...formData,
+        emailOrPhone: formData.emailOrPhone.trim(),
+      });
       
       if (result.success) {
         navigate('/home');
@@ -84,10 +96,15 @@ const LoginScreen = () => {
               name="emailOrPhone"
               value={formData.emailOrPhone}
               onChange={handleChange}
-              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition"
+              className={`w-full px-4 py-3 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition ${
+                fieldErrors.emailOrPhone ? 'border-red-500' : 'border-gray-300'
+              }`}
               placeholder="Enter email or phone"
               disabled={loading}
             />
+            {fieldErrors.emailOrPhone && (
+              <p className="mt-1 text-sm text-red-600">{fieldErrors.emailOrPhone}</p>
+            )}
           </div>
 
           {/* Password */}
@@ -101,10 +118,15 @@ const LoginScreen = () => {
               name="password"
               value={formData.password}
               onChange={handleChange}
-              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition"
+              className={`w-full px-4 py-3 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition ${
+                fieldErrors.password ? 'border-red-500' : 'border-gray-300'
+              }`}
               placeholder="Enter password"
               disabled={loading}
             />
+            {fieldErrors.password && (
+              <p className="mt-1 text-sm text-red-600">{fieldErrors.password}</p>
+            )}
           </div>
 
           {/* Remember Me */}

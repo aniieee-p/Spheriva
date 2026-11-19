@@ -1,20 +1,27 @@
 const mongoose = require('mongoose');
+const SafetySession = require('../models/SafetySession.model');
 
 const connectDB = async () => {
   if (!process.env.MONGODB_URI) {
-    console.warn('\n⚠️  WARNING: MONGODB_URI not configured in .env file');
-    console.warn('⚠️  Backend will run but database features are disabled');
-    console.warn('⚠️  Copy .env.example to .env and add your MongoDB Atlas URI\n');
-    return;
+    throw new Error('MONGODB_URI is required before the backend can start');
   }
 
   try {
     const conn = await mongoose.connect(process.env.MONGODB_URI);
+    await SafetySession.createIndexes();
 
     console.log(`✓ MongoDB Connected: ${conn.connection.host}`);
+    console.log('✓ Safety session indexes initialized');
+    return conn;
   } catch (error) {
     console.error(`✗ Error connecting to MongoDB: ${error.message}`);
-    console.error('✗ Backend will run but database features are disabled\n');
+    try {
+      await mongoose.disconnect();
+    } catch (disconnectError) {
+      console.error(`✗ Error disconnecting MongoDB after startup failure: ${disconnectError.message}`);
+    }
+
+    throw error;
   }
 };
 

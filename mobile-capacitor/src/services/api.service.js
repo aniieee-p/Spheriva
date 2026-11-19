@@ -39,10 +39,11 @@ apiClient.interceptors.response.use(
     if (error.response) {
       const { status, data } = error.response;
 
-      // Unauthorized - Clear token
+      // Defer auth cleanup so active tracking can be stopped first.
       if (status === 401) {
-        await storageService.clearAll();
-        console.log('Unauthorized - token cleared');
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('spheriva:unauthorized'));
+        }
       }
 
       return Promise.reject({
@@ -52,11 +53,16 @@ apiClient.interceptors.response.use(
       });
     }
 
-    // Network error
+    // No response received: timeout or network error
     if (error.request) {
+      const timedOut =
+        error.code === 'ECONNABORTED' || /timeout/i.test(error.message || '');
       return Promise.reject({
         status: 0,
-        message: 'Network error. Please check your connection.',
+        code: error.code,
+        message: timedOut
+          ? 'The server is taking too long to respond. It may be waking up, please try again in a minute.'
+          : 'Network error. Please check your connection.',
       });
     }
 
@@ -93,6 +99,15 @@ export const apiService = {
   
   createSession: async (sessionData) => {
     return await apiClient.post(API_CONFIG.ENDPOINTS.SESSION.CREATE, sessionData);
+  },
+
+  getActiveSession: async () => {
+    return await apiClient.get(API_CONFIG.ENDPOINTS.SESSION.ACTIVE);
+  },
+
+  updateSessionLocation: async (sessionId, location) => {
+    const url = API_CONFIG.ENDPOINTS.SESSION.LOCATION.replace(':id', sessionId);
+    return await apiClient.post(url, location);
   },
 
   getSessions: async () => {
