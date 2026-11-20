@@ -3,10 +3,12 @@
  * Main dashboard after login - shows safety session controls
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { startSafetySession, stopSafetySession, getSafetySessionStatus } from '../services/trackingService';
+import { Geolocation } from '@capacitor/geolocation';
+import apiService from '../services/api.service';
 
 const HomeScreen = () => {
   const navigate = useNavigate();
@@ -20,6 +22,8 @@ const HomeScreen = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [successMessage, setSuccessMessage] = useState(null);
+  const [sosLoading, setSosLoading] = useState(false);
+  const sosInFlight = useRef(false);
 
   // Check for active session on mount and when component becomes visible
   useEffect(() => {
@@ -79,6 +83,106 @@ const HomeScreen = () => {
       window.removeEventListener('spheriva:location-sync-state', handleLocationSyncState);
     };
   }, []);
+
+  // Keep an uncertain request ID so a retry cannot create a second SOS record.
+  const handleSOS = async () => {
+    if (sosInFlight.current) return;
+
+    const accountId = user?.id || user?._id;
+    if (!accountId) {
+      setError('Please sign in before recording an SOS alert.');
+      return;
+    }
+
+    const pendingKey = `spheriva:sos-pending:${accountId}`;
+    let pendingRequest;
+    try {
+      const stored = sessionStorage.getItem(pendingKey);
+      pendingRequest = stored ? JSON.parse(stored) : null;
+    } catch {
+      setError('Could not access SOS retry state. No request was sent.');
+      return;
+    }
+
+    const isRetry = Boolean(pendingRequest?.clientRequestId);
+    const confirmed = window.confirm(
+      isRetry
+        ? 'A previous SOS request may already be recorded. Retry the SAME request to check its result?'
+        : 'Record an emergency SOS alert? This saves an alert on the server, but does not yet confirm notifications to trusted contacts.'
+    );
+    if (!confirmed) return;
+
+    sosInFlight.current = true;
+    setSosLoading(true);
+    setError(null);
+    setSuccessMessage(null);
+
+    try {
+      let alertData = pendingRequest;
+      if (!isRetry) {
+        if (!globalThis.crypto?.getRandomValues) {
+          throw new Error('Secure request ID generation is unavailable. SOS was not sent.');
+        }
+        const bytes = new Uint8Array(16);
+        globalThis.crypto.getRandomValues(bytes);
+        const clientRequestId = Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
+        alertData = {
+          clientRequestId,
+          situation: 'User triggered emergency SOS'
+        };
+
+        // A missing location must not prevent recording an SOS alert.
+        try {
+          const position = await Geolocation.getCurrentPosition({
+            enableHighAccuracy: true,
+            timeout: 10000,
+            maximumAge: 0
+          });
+          if (Number.isFinite(position?.coords?.latitude) && Number.isFinite(position?.coords?.longitude)) {
+            alertData.latitude = position.coords.latitude;
+            alertData.longitude = position.coords.longitude;
+            if (Number.isFinite(position.coords.accuracy)) {
+              alertData.accuracy = position.coords.accuracy;
+            }
+          }
+        } catch (locationError) {
+          console.warn('SOS location unavailable:', locationError);
+          const continueWithoutLocation = window.confirm(
+            'GPS location is unavailable. Record the SOS alert without location?'
+          );
+          if (!continueWithoutLocation) return;
+        }
+
+        // Attach only a confirmed active session, not a pending cleanup session.
+        if (sessionActive && sessionId && !cleanupPending) {
+          alertData.sessionId = sessionId;
+        }
+        sessionStorage.setItem(pendingKey, JSON.stringify(alertData));
+      }
+
+      const result = await apiService.sendEmergencyAlert(alertData);
+      if (result?.success === true) {
+        sessionStorage.removeItem(pendingKey);
+        setSuccessMessage('SOS alert recorded on the server. Trusted-contact notification is not confirmed.');
+      } else {
+        // Keep the same ID if the server result is ambiguous.
+        setError(result?.message || 'SOS result is uncertain. Retry using the same request.');
+      }
+    } catch (err) {
+      // 4xx responses are definitive failures; network/timeout errors are ambiguous.
+      if (err?.status >= 400 && err?.status < 500 && err.status !== 408 && err.status !== 429) {
+        try { sessionStorage.removeItem(pendingKey); } catch { /* no-op */ }
+      }
+      setError(
+        err?.status === 0
+          ? 'Network or timeout error. SOS may have been recorded. Retry using the same request ID when connected.'
+          : (err?.message || 'Unable to confirm SOS alert. Please try again.')
+      );
+    } finally {
+      sosInFlight.current = false;
+      setSosLoading(false);
+    }
+  };
 
   const handleLogout = async () => {
     const result = await logout();
@@ -340,13 +444,14 @@ const HomeScreen = () => {
 
             {/* Emergency SOS Button */}
             <button
-              className="w-full bg-red-600 hover:bg-red-700 text-white py-4 rounded-lg font-semibold transition shadow-lg flex items-center justify-center"
-              onClick={() => alert('Emergency SOS feature coming soon!')}
+              className="w-full bg-red-600 hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed text-white py-4 rounded-lg font-semibold transition shadow-lg flex items-center justify-center"
+              onClick={handleSOS}
+              disabled={sosLoading}
             >
               <svg className="w-6 h-6 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
               </svg>
-              Emergency SOS
+              {sosLoading ? 'Recording SOS...' : 'Emergency SOS'}
             </button>
           </div>
         </div>

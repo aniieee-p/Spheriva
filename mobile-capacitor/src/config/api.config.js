@@ -28,7 +28,7 @@ export const API_CONFIG = {
       END: '/sessions/:id/end',
     },
     EMERGENCY: {
-      ALERT: '/emergency/alert',
+      ALERT: '/sos',
       CONTACTS: '/emergency/contacts',
     },
   },
