@@ -11,6 +11,9 @@ import ProfileScreen from './screens/ProfileScreen';
 import SessionHistoryScreen from './screens/SessionHistoryScreen';
 import TrustedContactsScreen from './screens/TrustedContactsScreen';
 import RealCallingScreen from './screens/RealCallingScreen';
+import ActiveFakeCallScreen from './screens/ActiveFakeCallScreen';
+import IncomingFakeCallScreen from './screens/IncomingFakeCallScreen';
+import FakeCallScreen from './screens/FakeCallScreen';
 
 function App() {
   return (
@@ -33,6 +36,9 @@ function App() {
             <Route path="/profile" element={<ProfileScreen />} />
             <Route path="/contacts" element={<TrustedContactsScreen />} />
             <Route path="/real-calling" element={<RealCallingScreen />} />
+            <Route path="/fake-call/active" element={<ActiveFakeCallScreen />} />
+            <Route path="/fake-call/incoming" element={<IncomingFakeCallScreen />} />
+            <Route path="/fake-call" element={<FakeCallScreen />} />
           </Route>
 
           <Route path="*" element={<Navigate to="/" replace />} />
