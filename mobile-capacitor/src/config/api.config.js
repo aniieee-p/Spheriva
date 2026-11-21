@@ -27,6 +27,11 @@ export const API_CONFIG = {
       LOCATION: '/sessions/:id/location',
       END: '/sessions/:id/end',
     },
+    CALLING: {
+      TOKEN: '/calls/token',
+      RESOLVE: '/calls/resolve',
+      CREATE: '/calls',
+    },
     EMERGENCY: {
       ALERT: '/sos',
       CONTACTS: '/emergency/contacts',

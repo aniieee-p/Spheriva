@@ -10,9 +10,12 @@ import HomeScreen from './screens/HomeScreen';
 import ProfileScreen from './screens/ProfileScreen';
 import SessionHistoryScreen from './screens/SessionHistoryScreen';
 import TrustedContactsScreen from './screens/TrustedContactsScreen';
-import FakeCallScreen from './screens/FakeCallScreen';
-import IncomingFakeCallScreen from './screens/IncomingFakeCallScreen';
+import RealCallingScreen from './screens/RealCallingScreen';
+
 import ActiveFakeCallScreen from './screens/ActiveFakeCallScreen';
+import IncomingFakeCallScreen from './screens/IncomingFakeCallScreen';
+import FakeCallScreen from './screens/FakeCallScreen';
+import IncomingRealCallManager from './components/IncomingRealCallManager';
 
 function App() {
   return (
@@ -24,19 +27,22 @@ function App() {
           <Route path="/register" element={<RegisterScreen />} />
 
           <Route
-            element={
-              <ProtectedRoute>
-                <AppLayout />
-              </ProtectedRoute>
-            }
-          >
+  element={
+    <ProtectedRoute>
+      <IncomingRealCallManager>
+        <AppLayout />
+      </IncomingRealCallManager>
+    </ProtectedRoute>
+  }
+>
             <Route path="/home" element={<HomeScreen />} />
             <Route path="/history" element={<SessionHistoryScreen />} />
             <Route path="/profile" element={<ProfileScreen />} />
             <Route path="/contacts" element={<TrustedContactsScreen />} />
-            <Route path="/fake-call" element={<FakeCallScreen />} />
-            <Route path="/fake-call/incoming" element={<IncomingFakeCallScreen />} />
+            <Route path="/real-calling" element={<RealCallingScreen />} />
             <Route path="/fake-call/active" element={<ActiveFakeCallScreen />} />
+            <Route path="/fake-call/incoming" element={<IncomingFakeCallScreen />} />
+            <Route path="/fake-call" element={<FakeCallScreen />} />
           </Route>
 
           <Route path="*" element={<Navigate to="/" replace />} />

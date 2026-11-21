@@ -95,6 +95,36 @@ export const apiService = {
     return await apiClient.put(API_CONFIG.ENDPOINTS.AUTH.UPDATE_PROFILE, userData);
   },
 
+  // ==================== Real Calling ====================
+
+  getCallingToken: async () => {
+    return await apiClient.get(API_CONFIG.ENDPOINTS.CALLING.TOKEN);
+  },
+
+  resolveCallingContact: async (contactId) => {
+    return await apiClient.post(
+      API_CONFIG.ENDPOINTS.CALLING.RESOLVE,
+      { contactId }
+    );
+  },
+
+  createRealCall: async (contactId, type) => {
+    return await apiClient.post(
+      API_CONFIG.ENDPOINTS.CALLING.CREATE,
+      { contactId, type }
+    );
+  },
+
+
+  // End real voice/video call for both participants
+  endRealCall: async (callId, callType) => {
+    return await apiClient.post(
+      `${API_CONFIG.ENDPOINTS.CALLING.CREATE}/end`,
+      { callId, callType }
+    );
+  },
+
+
   // ==================== Safety Sessions ====================
   
   createSession: async (sessionData) => {
