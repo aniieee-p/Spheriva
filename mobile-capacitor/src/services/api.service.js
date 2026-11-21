@@ -115,6 +115,16 @@ export const apiService = {
     );
   },
 
+
+  // End real voice/video call for both participants
+  endRealCall: async (callId, callType) => {
+    return await apiClient.post(
+      `${API_CONFIG.ENDPOINTS.CALLING.CREATE}/end`,
+      { callId, callType }
+    );
+  },
+
+
   // ==================== Safety Sessions ====================
   
   createSession: async (sessionData) => {
