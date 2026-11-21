@@ -147,8 +147,8 @@ const createCallingSession = async (req, res, next) => {
       data: {
         created_by_id: callerId,
         members: [
-          { user_id: callerId },
-          { user_id: recipientId }
+          { user_id: callerId, role: 'call_member' },
+          { user_id: recipientId, role: 'call_member' }
         ]
       }
     });
