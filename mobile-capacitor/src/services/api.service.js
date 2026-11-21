@@ -144,7 +144,7 @@ export const apiService = {
   },
 
   updateEmergencyContact: async (contactId, contactData) => {
-    return await apiClient.put(
+    return await apiClient.patch(
       `${API_CONFIG.ENDPOINTS.EMERGENCY.CONTACTS}/${contactId}`,
       contactData
     );
