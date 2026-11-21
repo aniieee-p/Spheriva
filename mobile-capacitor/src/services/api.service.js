@@ -126,7 +126,7 @@ export const apiService = {
 
   endSession: async (sessionId) => {
     const url = API_CONFIG.ENDPOINTS.SESSION.END.replace(':id', sessionId);
-    return await apiClient.post(url);
+    return await apiClient.patch(url);
   },
 
   // ==================== Emergency & Contacts ====================

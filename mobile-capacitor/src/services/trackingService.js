@@ -17,11 +17,11 @@
  * - FAILED_PERMISSION_REVOKED: Permission revoked, cleanup in progress
  */
 
-import { registerPlugin } from '@capacitor/core';
+import { LocationWatcher } from './locationWatcher';
 import { apiService } from './api.service';
 import { storageService } from './storage.service';
 
-const BackgroundGeolocation = registerPlugin('BackgroundGeolocation');
+
 import {
   initializePermissionManager,
   notifySessionStarted,
@@ -309,7 +309,7 @@ const resolveStoredSessionCleanup = async (userId, { skipBackendEnd = false } = 
   let watcherRemoved = false;
   if (isUnownedSessionLifecycle(pending.lifecycleState) && pending.watcherId) {
     try {
-      await BackgroundGeolocation.removeWatcher({ id: pending.watcherId });
+      await LocationWatcher.removeWatcher({ id: pending.watcherId });
     } catch (error) {
       trackingState.activeWatcherId = pending.watcherId;
       trackingState.stuckWatcherId = pending.watcherId;
@@ -392,7 +392,7 @@ const resolveStoredSessionCleanup = async (userId, { skipBackendEnd = false } = 
 
     if (pending.watcherId) {
       try {
-        await BackgroundGeolocation.removeWatcher({ id: pending.watcherId });
+        await LocationWatcher.removeWatcher({ id: pending.watcherId });
       } catch (error) {
         trackingState.activeWatcherId = pending.watcherId;
         trackingState.stuckWatcherId = pending.watcherId;
@@ -467,7 +467,7 @@ const resolveStoredSessionCleanup = async (userId, { skipBackendEnd = false } = 
 
   if (pending.watcherId) {
     try {
-      await BackgroundGeolocation.removeWatcher({ id: pending.watcherId });
+      await LocationWatcher.removeWatcher({ id: pending.watcherId });
     } catch (error) {
       trackingState.stuckWatcherId = pending.watcherId;
       trackingState.activeWatcherId = pending.watcherId;
@@ -1449,7 +1449,7 @@ export async function startSafetySession(options = {}) {
     let watcherId = null;
 
     try {
-      watcherId = await BackgroundGeolocation.addWatcher(
+      watcherId = await LocationWatcher.addWatcher(
         {
           backgroundMessage: options.backgroundMessage,
           backgroundTitle: options.backgroundTitle || 'Spheriva Safety',
@@ -1475,7 +1475,7 @@ export async function startSafetySession(options = {}) {
         trackingState.watcherCleanupPending = true;
         trackingState.sessionState = SessionState.FAILED_WATCHER_STUCK;
         try {
-          await BackgroundGeolocation.removeWatcher({ id: watcherId });
+          await LocationWatcher.removeWatcher({ id: watcherId });
           trackingState.activeWatcherId = null;
           trackingState.stuckWatcherId = null;
           trackingState.watcherCleanupPending = false;
@@ -1581,7 +1581,7 @@ export async function startSafetySession(options = {}) {
       // Attempt watcher removal
       let removalSucceeded = false;
       try {
-        await BackgroundGeolocation.removeWatcher({ id: watcherId });
+        await LocationWatcher.removeWatcher({ id: watcherId });
         removalSucceeded = true;
       } catch (removeError) {
         console.error('Watcher removal failed during startup cleanup:', removeError);
@@ -1825,7 +1825,7 @@ export async function stopSafetySession({ skipBackendEnd = false } = {}) {
   // STEP 4: Attempt watcher removal
   let removalSucceeded = false;
   try {
-    await BackgroundGeolocation.removeWatcher({ id: watcherId });
+    await LocationWatcher.removeWatcher({ id: watcherId });
     removalSucceeded = true;
     trackingState.cleanupStage = CleanupStage.WATCHER_REMOVED;
   } catch (removeError) {
@@ -1917,7 +1917,7 @@ export async function retryCleanup({ skipBackendEnd = false } = {}) {
   let removalSucceeded = false;
 
   try {
-    await BackgroundGeolocation.removeWatcher({ id: watcherId });
+    await LocationWatcher.removeWatcher({ id: watcherId });
     removalSucceeded = true;
   } catch (removeError) {
     console.error(`Cleanup retry ${attemptNumber} failed:`, removeError);
@@ -2114,7 +2114,7 @@ export async function cleanupSafetySessionForLogout(userId, { unauthorized = fal
     watcherMayExistForLifecycle(pending.lifecycleState);
   if (pendingWatcherId) {
     try {
-      await BackgroundGeolocation.removeWatcher({ id: pendingWatcherId });
+      await LocationWatcher.removeWatcher({ id: pendingWatcherId });
     } catch (error) {
       trackingState.activeSessionOwnerId = ownerId;
       trackingState.activeSessionId = isUnownedSessionLifecycle(pending.lifecycleState)
@@ -2651,7 +2651,7 @@ async function initiateFailureCleanup(reason) {
 
     let removalSucceeded = false;
     try {
-      await BackgroundGeolocation.removeWatcher({ id: watcherId });
+      await LocationWatcher.removeWatcher({ id: watcherId });
       removalSucceeded = true;
     } catch (removeError) {
       console.error('Watcher removal failed during failure cleanup:', removeError);
