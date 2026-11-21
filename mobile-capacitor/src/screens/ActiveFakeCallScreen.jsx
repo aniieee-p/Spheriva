@@ -35,11 +35,14 @@ export default function ActiveFakeCallScreen() {
           Simulated {callType === 'video' ? 'Video' : 'Voice'} Call
         </p>
 
-        <div className="w-32 h-32 bg-purple-600 rounded-full mx-auto flex items-center justify-center text-6xl mb-6">
-          {callType === 'video' ? '📹' : '👤'}
-        </div>
-
-        <h1 className="text-3xl font-bold">{callerName}</h1>
+        {callType === 'voice' && (
+          <>
+            <div className="w-32 h-32 bg-purple-600 rounded-full mx-auto flex items-center justify-center text-6xl mb-6">
+              👤
+            </div>
+            <h1 className="text-3xl font-bold">{callerName}</h1>
+          </>
+        )}
 
         <p className="mt-3 text-lg text-gray-300">
           {formatTime(seconds)}
