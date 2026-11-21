@@ -95,6 +95,19 @@ export const apiService = {
     return await apiClient.put(API_CONFIG.ENDPOINTS.AUTH.UPDATE_PROFILE, userData);
   },
 
+  // ==================== Real Calling ====================
+
+  getCallingToken: async () => {
+    return await apiClient.get(API_CONFIG.ENDPOINTS.CALLING.TOKEN);
+  },
+
+  resolveCallingContact: async (contactId) => {
+    return await apiClient.post(
+      API_CONFIG.ENDPOINTS.CALLING.RESOLVE,
+      { contactId }
+    );
+  },
+
   // ==================== Safety Sessions ====================
   
   createSession: async (sessionData) => {

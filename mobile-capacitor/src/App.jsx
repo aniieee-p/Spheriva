@@ -11,6 +11,7 @@ import ProfileScreen from './screens/ProfileScreen';
 import SessionHistoryScreen from './screens/SessionHistoryScreen';
 import TrustedContactsScreen from './screens/TrustedContactsScreen';
 import RealCallingScreen from './screens/RealCallingScreen';
+import RealCallRoom from './components/RealCallRoom';
 import ActiveFakeCallScreen from './screens/ActiveFakeCallScreen';
 import IncomingFakeCallScreen from './screens/IncomingFakeCallScreen';
 import FakeCallScreen from './screens/FakeCallScreen';
