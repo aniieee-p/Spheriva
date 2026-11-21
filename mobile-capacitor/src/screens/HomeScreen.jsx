@@ -483,6 +483,30 @@ const HomeScreen = () => {
               <p className="text-sm font-medium text-gray-700">Contacts</p>
             </button>
 
+            {/* Fake Call */}
+            <button
+              type="button"
+              className="bg-pink-50 hover:bg-pink-100 p-4 rounded-lg transition text-center"
+              onClick={() => navigate('/fake-call')}
+            >
+              <svg
+                className="w-8 h-8 mx-auto mb-2 text-pink-600"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M22 16.92v3a2 2 0 01-2.18 2A19.79 19.79 0 013 5.18 2 2 0 015 3h3a2 2 0 012 1.72c.12.96.35 1.9.69 2.79a2 2 0 01-.45 2.11L9 10.87a16 16 0 006.13 6.13l1.25-1.24a2 2 0 012.11-.45c.89.34 1.83.57 2.79.69A2 2 0 0122 16.92z"
+                />
+              </svg>
+              <p className="text-sm font-medium text-gray-700">
+                Fake Call
+              </p>
+            </button>
+
             {/* Settings */}
             <button
               className="bg-gray-50 hover:bg-gray-100 p-4 rounded-lg transition text-center"
