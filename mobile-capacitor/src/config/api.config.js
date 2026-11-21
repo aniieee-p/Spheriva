@@ -30,6 +30,7 @@ export const API_CONFIG = {
     CALLING: {
       TOKEN: '/calls/token',
       RESOLVE: '/calls/resolve',
+      CREATE: '/calls',
     },
     EMERGENCY: {
       ALERT: '/sos',

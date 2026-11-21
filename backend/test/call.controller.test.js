@@ -121,3 +121,97 @@ test('prevents calling own account', async () => {
 
   assert.equal(res.statusCode, 400);
 });
+
+// Real Call Creation Security Tests
+const {
+  createCallingSession
+} = require('../src/controllers/call.controller');
+
+test('rejects invalid call type', async () => {
+  const req = {
+    user: { _id: ownerId },
+    body: { contactId, type: 'invalid' }
+  };
+
+  const res = makeResponse();
+
+  await createCallingSession(req, res, error => {
+    throw error;
+  });
+
+  assert.equal(res.statusCode, 400);
+  assert.equal(res.body.success, false);
+});
+
+test('rejects invalid contact ID for call creation', async () => {
+  const req = {
+    user: { _id: ownerId },
+    body: { contactId: 'invalid-id', type: 'video' }
+  };
+
+  const res = makeResponse();
+
+  await createCallingSession(req, res, error => {
+    throw error;
+  });
+
+  assert.equal(res.statusCode, 400);
+});
+
+test('prevents calling contacts not owned by user', async () => {
+  let actualQuery;
+
+  TrustedContact.findOne = async query => {
+    actualQuery = query;
+    return null;
+  };
+
+  try {
+    const req = {
+      user: { _id: ownerId },
+      body: { contactId, type: 'voice' }
+    };
+
+    const res = makeResponse();
+
+    await createCallingSession(req, res, error => {
+      throw error;
+    });
+
+    assert.equal(actualQuery.user, ownerId);
+    assert.equal(actualQuery._id, contactId);
+    assert.equal(res.statusCode, 404);
+  } finally {
+    TrustedContact.findOne = originalContactFindOne;
+  }
+});
+
+test('prevents real calls to own account', async () => {
+  TrustedContact.findOne = async () => ({
+    name: 'Self',
+    phoneNumber: '9876543210'
+  });
+
+  User.findOne = async () => ({
+    _id: ownerId,
+    isActive: true
+  });
+
+  try {
+    const req = {
+      user: { _id: ownerId },
+      body: { contactId, type: 'video' }
+    };
+
+    const res = makeResponse();
+
+    await createCallingSession(req, res, error => {
+      throw error;
+    });
+
+    assert.equal(res.statusCode, 400);
+  } finally {
+    TrustedContact.findOne = originalContactFindOne;
+    User.findOne = originalUserFindOne;
+  }
+});

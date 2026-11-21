@@ -108,6 +108,13 @@ export const apiService = {
     );
   },
 
+  createRealCall: async (contactId, type) => {
+    return await apiClient.post(
+      API_CONFIG.ENDPOINTS.CALLING.CREATE,
+      { contactId, type }
+    );
+  },
+
   // ==================== Safety Sessions ====================
   
   createSession: async (sessionData) => {
