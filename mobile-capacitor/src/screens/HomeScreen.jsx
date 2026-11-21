@@ -483,6 +483,29 @@ const HomeScreen = () => {
               <p className="text-sm font-medium text-gray-700">Contacts</p>
             </button>
 
+            {/* Real Voice & Video Calling */}
+            <button
+              type="button"
+              className="bg-indigo-50 hover:bg-indigo-100 p-4 rounded-lg transition text-center"
+              onClick={() => navigate('/real-calling')}
+            >
+              <svg
+                className="w-8 h-8 mx-auto mb-2 text-indigo-600"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth={2}
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                viewBox="0 0 24 24"
+              >
+                <rect x="3" y="5" width="13" height="14" rx="2" />
+                <path d="m16 10 5-3v10l-5-3" />
+              </svg>
+              <p className="text-sm font-medium text-gray-700">
+                Voice & Video Call
+              </p>
+            </button>
+
             {/* Settings */}
             <button
               className="bg-gray-50 hover:bg-gray-100 p-4 rounded-lg transition text-center"

@@ -10,6 +10,7 @@ import HomeScreen from './screens/HomeScreen';
 import ProfileScreen from './screens/ProfileScreen';
 import SessionHistoryScreen from './screens/SessionHistoryScreen';
 import TrustedContactsScreen from './screens/TrustedContactsScreen';
+import RealCallingScreen from './screens/RealCallingScreen';
 
 function App() {
   return (
@@ -31,6 +32,7 @@ function App() {
             <Route path="/history" element={<SessionHistoryScreen />} />
             <Route path="/profile" element={<ProfileScreen />} />
             <Route path="/contacts" element={<TrustedContactsScreen />} />
+            <Route path="/real-calling" element={<RealCallingScreen />} />
           </Route>
 
           <Route path="*" element={<Navigate to="/" replace />} />
