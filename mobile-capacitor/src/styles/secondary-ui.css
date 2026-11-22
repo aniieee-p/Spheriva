@@ -1,0 +1,418 @@
+
+/* =============================================
+   SPHERIVA — SECONDARY SCREENS UI
+   Navy #0B1423 | Teal #0F766E | White
+   ============================================= */
+
+.sph-profile,
+.sph-contacts,
+.sph-real,
+.sph-fake {
+  min-height: 100vh;
+  background:
+    radial-gradient(circle at 94% 8%, rgba(13,148,136,.08), transparent 28%),
+    #f5f7fa !important;
+  color: #0f172a;
+}
+
+/* Shared branding and headers */
+
+.sph-profile > div:first-child,
+.sph-contacts > header,
+.sph-real > div:first-child {
+  background: linear-gradient(125deg, #0b1423, #12333f) !important;
+  color: #fff !important;
+  box-shadow: none !important;
+  border-radius: 0 0 28px 28px;
+}
+
+.sph-profile > div:first-child,
+.sph-contacts > header {
+  padding: 30px 24px !important;
+}
+
+.sph-profile h1,
+.sph-contacts h1,
+.sph-real h1,
+.sph-fake h1 {
+  letter-spacing: -.035em;
+  font-weight: 800;
+}
+
+.sph-profile > div:first-child p,
+.sph-contacts > header p,
+.sph-real > div:first-child p {
+  color: #b6d4d6 !important;
+}
+
+/* Shared content */
+
+.sph-profile > div:nth-child(2),
+.sph-contacts main,
+.sph-real > div:nth-child(2) {
+  width: 100%;
+  max-width: 1100px !important;
+  margin-left: auto;
+  margin-right: auto;
+  padding: 28px 20px 110px;
+}
+
+.sph-profile .bg-white,
+.sph-contacts .bg-white,
+.sph-real .bg-white,
+.sph-fake .bg-white {
+  background: #fff !important;
+  border: 1px solid #e2e8f0;
+  border-radius: 22px !important;
+  box-shadow: 0 12px 36px rgba(15,23,42,.045) !important;
+}
+
+/* Form elements */
+
+.sph-profile input,
+.sph-contacts input,
+.sph-contacts select,
+.sph-real input,
+.sph-fake input,
+.sph-fake select {
+  border: 1px solid #dbe4ea !important;
+  background: #f8fafc !important;
+  color: #0f172a !important;
+  border-radius: 12px !important;
+  min-height: 46px;
+  outline: none;
+}
+
+.sph-profile input:focus,
+.sph-contacts input:focus,
+.sph-contacts select:focus,
+.sph-real input:focus,
+.sph-fake input:focus,
+.sph-fake select:focus {
+  border-color: #0d9488 !important;
+  box-shadow: 0 0 0 3px rgba(13,148,136,.12);
+  background: white !important;
+}
+
+.sph-profile input:disabled,
+.sph-contacts input:disabled,
+.sph-real input:disabled,
+.sph-fake input:disabled {
+  opacity: .65;
+}
+
+.sph-profile label,
+.sph-contacts label,
+.sph-fake label {
+  color: #334155;
+  font-weight: 600;
+}
+
+/* Action buttons */
+
+.sph-profile button,
+.sph-contacts button,
+.sph-real button,
+.sph-fake button,
+.sph-real-ringing button {
+  transition:
+    background-color .18s ease,
+    border-color .18s ease,
+    transform .18s ease,
+    box-shadow .18s ease;
+}
+
+.sph-profile button:focus-visible,
+.sph-contacts button:focus-visible,
+.sph-real button:focus-visible,
+.sph-fake button:focus-visible,
+.sph-fake-incoming button:focus-visible,
+.sph-fake-active button:focus-visible,
+.sph-real-ringing button:focus-visible {
+  outline: 3px solid #5eead4;
+  outline-offset: 3px;
+}
+
+.sph-profile button:disabled,
+.sph-contacts button:disabled,
+.sph-real button:disabled,
+.sph-fake button:disabled {
+  cursor: not-allowed;
+  opacity: .6;
+}
+
+/* Replace old purple action palette */
+
+.sph-profile .bg-blue-600,
+.sph-profile .bg-purple-600,
+.sph-contacts .bg-purple-600,
+.sph-real .bg-purple-600,
+.sph-fake .bg-purple-700 {
+  background: #0f766e !important;
+  color: white !important;
+}
+
+.sph-profile .bg-blue-600:hover,
+.sph-profile .bg-purple-600:hover,
+.sph-contacts .bg-purple-600:hover,
+.sph-real .bg-purple-600:hover,
+.sph-fake .bg-purple-700:hover {
+  background: #115e59 !important;
+}
+
+.sph-profile .text-blue-700,
+.sph-contacts .text-purple-700,
+.sph-real .text-purple-700,
+.sph-fake .text-purple-700 {
+  color: #0f766e !important;
+}
+
+.sph-profile .bg-blue-100,
+.sph-contacts .bg-purple-100,
+.sph-real .bg-purple-50,
+.sph-fake .bg-purple-100 {
+  background: #ccfbf1 !important;
+}
+
+.sph-profile .border-blue-600,
+.sph-contacts .border-purple-600,
+.sph-real .border-purple-600,
+.sph-fake .border-purple-600 {
+  border-color: #0d9488 !important;
+}
+
+/* Profile */
+
+.sph-profile > div:nth-child(2) {
+  max-width: 830px !important;
+}
+
+.sph-profile > div:nth-child(2) > div {
+  padding: 28px !important;
+}
+
+.sph-profile .rounded-full.bg-blue-100 {
+  background: linear-gradient(145deg, #ccfbf1, #99f6e4) !important;
+  color: #115e59 !important;
+  border: 3px solid #fff;
+  box-shadow: 0 0 0 1px #ccfbf1;
+}
+
+/* Trusted contacts */
+
+.sph-contacts main {
+  max-width: 920px !important;
+}
+
+.sph-contacts main > .bg-white,
+.sph-contacts main > form.bg-white {
+  padding: 26px !important;
+}
+
+.sph-contacts .bg-purple-50 {
+  background: #f0fdfa !important;
+}
+
+.sph-contacts .rounded-xl {
+  border-radius: 16px;
+}
+
+/* Real calling directory */
+
+.sph-real > div:first-child {
+  padding: 34px 24px 64px !important;
+}
+
+.sph-real > div:nth-child(2) {
+  max-width: 820px !important;
+}
+
+.sph-real input[type="search"] {
+  width: 100%;
+  padding: 12px 16px;
+}
+
+.sph-real .bg-purple-50,
+.sph-real .bg-purple-100 {
+  background: #f0fdfa !important;
+}
+
+.sph-real .text-purple-200,
+.sph-real .text-purple-300 {
+  color: #99f6e4 !important;
+}
+
+/* Outgoing real call */
+
+.sph-real-ringing {
+  min-height: 100vh;
+  background:
+    radial-gradient(circle at center 25%, rgba(45,212,191,.16), transparent 36%),
+    linear-gradient(145deg, #0b1423, #103d43, #07111d) !important;
+  color: white;
+}
+
+.sph-real-ringing .bg-purple-500\/20 {
+  background: rgba(45,212,191,.16) !important;
+  border: 1px solid rgba(94,234,212,.2);
+  box-shadow: 0 0 90px rgba(20,184,166,.12);
+}
+
+.sph-real-ringing .text-purple-200,
+.sph-real-ringing .text-purple-300 {
+  color: #99f6e4 !important;
+}
+
+/* Active real call room */
+
+.sph-real-room {
+  background: #08121e !important;
+}
+
+.sph-real-room header {
+  background: #0b1423 !important;
+  border-bottom: 1px solid rgba(255,255,255,.09);
+}
+
+.sph-real-room header .text-purple-300 {
+  color: #5eead4 !important;
+}
+
+.sph-real-room main > div:last-child {
+  background: #0b1423 !important;
+  border-top: 1px solid rgba(255,255,255,.1);
+}
+
+.sph-real-room button {
+  transition: filter .2s, transform .2s;
+}
+
+.sph-real-room button:hover:not(:disabled) {
+  filter: brightness(1.09);
+}
+
+.sph-real-room button:focus-visible {
+  outline: 3px solid #5eead4;
+  outline-offset: 3px;
+}
+
+/* Fake call setup */
+
+.sph-fake {
+  padding: 32px 20px 110px !important;
+}
+
+.sph-fake > div {
+  max-width: 700px !important;
+  padding: 28px !important;
+}
+
+.sph-fake h1 {
+  font-size: 30px;
+  margin-bottom: 6px;
+}
+
+.sph-fake .bg-gray-50 {
+  background: #f8fafc !important;
+}
+
+.sph-fake select {
+  appearance: auto;
+}
+
+.sph-fake .border-purple-600 {
+  border: 2px solid #0d9488 !important;
+}
+
+/* Fake incoming call */
+
+.sph-fake-incoming,
+.sph-fake-active {
+  min-height: 100vh;
+  background:
+    radial-gradient(circle at 50% 32%, rgba(13,148,136,.2), transparent 33%),
+    linear-gradient(150deg, #0b1423 0%, #11333d 54%, #07121e 100%) !important;
+  color: white;
+}
+
+.sph-fake-incoming .text-purple-200,
+.sph-fake-active .text-purple-200 {
+  color: #99f6e4 !important;
+}
+
+.sph-fake-incoming .bg-purple-400\/30 {
+  background: rgba(94,234,212,.18) !important;
+}
+
+.sph-fake-incoming .from-purple-500 {
+  --tw-gradient-from: #0f766e !important;
+}
+
+.sph-fake-incoming .to-pink-500 {
+  --tw-gradient-to: #14b8a6 !important;
+}
+
+.sph-fake-active .bg-purple-600 {
+  background: #0f766e !important;
+}
+
+.sph-fake-active .bg-gray-800,
+.sph-fake-active .bg-gray-700 {
+  background: #1b3442 !important;
+}
+
+/* Shared typography */
+
+.sph-profile,
+.sph-contacts,
+.sph-real,
+.sph-fake {
+  font-family: inherit;
+}
+
+.sph-profile p,
+.sph-contacts p,
+.sph-real p,
+.sph-fake p {
+  line-height: 1.55;
+}
+
+@media (min-width: 768px) {
+  .sph-profile > div:nth-child(2),
+  .sph-contacts main,
+  .sph-real > div:nth-child(2) {
+    padding-top: 36px;
+  }
+}
+
+@media (max-width: 640px) {
+  .sph-profile > div:first-child,
+  .sph-contacts > header {
+    padding: 24px 18px !important;
+  }
+
+  .sph-profile > div:nth-child(2) > div,
+  .sph-contacts main > .bg-white,
+  .sph-contacts main > form.bg-white,
+  .sph-fake > div {
+    padding: 20px !important;
+  }
+
+  .sph-fake-incoming,
+  .sph-fake-active {
+    padding: 36px 20px !important;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sph-profile *,
+  .sph-contacts *,
+  .sph-real *,
+  .sph-real-room *,
+  .sph-fake *,
+  .sph-fake-incoming *,
+  .sph-fake-active * {
+    scroll-behavior: auto !important;
+    transition-duration: .01ms !important;
+  }
+}
