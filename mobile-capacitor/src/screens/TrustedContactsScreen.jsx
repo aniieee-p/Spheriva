@@ -1,3 +1,4 @@
+import '../styles/secondary-ui.css';
 
 import React, { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -202,7 +203,7 @@ const TrustedContactsScreen = () => {
   };
 
   return (
-    <div>
+    <div className="sph-contacts">
       <header className="bg-gradient-to-r from-blue-600 to-purple-600 text-white p-6 shadow-lg">
         <div className="max-w-3xl mx-auto flex items-center gap-4">
           <button
