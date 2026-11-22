@@ -1,3 +1,4 @@
+import '../styles/secondary-ui.css';
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 
@@ -76,7 +77,7 @@ export default function FakeCallScreen() {
   };
 
   return (
-    <div className="min-h-screen bg-gray-50 p-5">
+    <div className="sph-fake min-h-screen bg-gray-50 p-5">
       <button
         onClick={() => navigate('/home')}
         className="mb-6 text-purple-700 font-medium"

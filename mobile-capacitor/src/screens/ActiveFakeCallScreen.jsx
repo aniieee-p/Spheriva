@@ -1,3 +1,4 @@
+import '../styles/secondary-ui.css';
 import React, { useEffect, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import AnimatedFakeCaller from '../components/AnimatedFakeCaller';
@@ -29,7 +30,7 @@ export default function ActiveFakeCallScreen() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-gray-900 to-purple-950 text-white flex flex-col justify-between items-center px-6 py-14">
+    <div className="sph-fake-active min-h-screen bg-gradient-to-b from-gray-900 to-purple-950 text-white flex flex-col justify-between items-center px-6 py-14">
       <div className="text-center w-full">
         <p className="text-sm text-purple-200 mb-6">
           Simulated {callType === 'video' ? 'Video' : 'Voice'} Call

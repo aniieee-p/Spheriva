@@ -1,13 +1,38 @@
 
-import React, { useEffect, useRef, useState } from 'react';
+import React, {
+  useEffect,
+  useRef,
+  useState,
+} from 'react';
+
 import { useNavigate } from 'react-router-dom';
 import { CallingState } from '@stream-io/video-react-sdk';
 
+import {
+  ArrowLeft,
+  ShieldCheck,
+  Phone,
+  Video,
+  Search,
+  Users,
+  PhoneOff,
+  Clock3,
+  AlertCircle,
+  ChevronRight,
+  LoaderCircle,
+} from 'lucide-react';
+
 import { apiService } from '../services/api.service';
+
 import { useRealCalling } from '../components/IncomingRealCallManager';
+
 import RealCallRoom from '../components/RealCallRoom';
 
 const RING_TIMEOUT_SECONDS = 45;
+
+// ======================================
+// HELPERS
+// ======================================
 
 const formatTime = (seconds) => {
   const minutes = Math.floor(seconds / 60);
@@ -18,8 +43,13 @@ const formatTime = (seconds) => {
   ).padStart(2, '0')}`;
 };
 
+// ======================================
+// REAL CALLING SCREEN
+// ======================================
+
 export default function RealCallingScreen() {
   const navigate = useNavigate();
+
   const { client } = useRealCalling() || {};
 
   const [contacts, setContacts] = useState([]);
@@ -31,6 +61,7 @@ export default function RealCallingScreen() {
   const [calling, setCalling] = useState(false);
   const [outgoingCall, setOutgoingCall] = useState(null);
   const [activeCall, setActiveCall] = useState(null);
+
   const [secondsLeft, setSecondsLeft] = useState(
     RING_TIMEOUT_SECONDS
   );
@@ -39,7 +70,10 @@ export default function RealCallingScreen() {
   const outgoingRef = useRef(null);
   const connectedRef = useRef(false);
 
-  // Load trusted contacts
+  // ======================================
+  // LOAD TRUSTED CONTACTS
+  // ======================================
+
   useEffect(() => {
     let cancelled = false;
 
@@ -64,7 +98,9 @@ export default function RealCallingScreen() {
           );
         }
       } finally {
-        if (!cancelled) setLoading(false);
+        if (!cancelled) {
+          setLoading(false);
+        }
       }
     };
 
@@ -75,21 +111,32 @@ export default function RealCallingScreen() {
     };
   }, []);
 
+  // ======================================
+  // CLEAR OUTGOING CALL STATE
+  // ======================================
+
   const clearOutgoingState = () => {
     outgoingRef.current = null;
+
     setOutgoingCall(null);
     setCalling(false);
+
     startingRef.current = false;
   };
 
-  // Cancel an unanswered outgoing call
+  // ======================================
+  // CANCEL UNANSWERED CALL
+  // ======================================
+
   const cancelOutgoing = async (
     message = 'Call cancelled',
     reason = 'cancel'
   ) => {
     const current = outgoingRef.current;
 
-    if (!current || connectedRef.current) return;
+    if (!current || connectedRef.current) {
+      return;
+    }
 
     clearOutgoingState();
     setNotice(message);
@@ -100,14 +147,22 @@ export default function RealCallingScreen() {
         reason,
       });
     } catch (err) {
-      console.error('Could not cancel outgoing call:', err);
+      console.error(
+        'Could not cancel outgoing call:',
+        err
+      );
+
       setError(
-        err.message || 'Could not complete call cancellation'
+        err.message ||
+          'Could not complete call cancellation'
       );
     }
   };
 
-  // Start a real voice or video call
+  // ======================================
+  // START REAL VOICE / VIDEO CALL
+  // ======================================
+
   const requestCall = async (contact, type) => {
     if (
       startingRef.current ||
@@ -135,7 +190,7 @@ export default function RealCallingScreen() {
       const selectedType =
         type === 'Voice' ? 'voice' : 'video';
 
-      // Backend creates the Stream ringing call
+      // Existing backend call creation
       const response = await apiService.createRealCall(
         contact._id,
         selectedType
@@ -155,7 +210,7 @@ export default function RealCallingScreen() {
         );
       }
 
-      // Reuse the shared authenticated Stream client
+      // Existing shared Stream client
       const call = client.call(callType, callId);
 
       const outgoing = {
@@ -170,11 +225,13 @@ export default function RealCallingScreen() {
       setSecondsLeft(RING_TIMEOUT_SECONDS);
       setOutgoingCall(outgoing);
 
-      // Fetch existing call without joining before acceptance
+      // Fetch call without joining before acceptance
       await call.get();
-
     } catch (err) {
-      console.error('Outgoing calling failed:', err);
+      console.error(
+        'Outgoing calling failed:',
+        err
+      );
 
       const current = outgoingRef.current;
 
@@ -203,9 +260,14 @@ export default function RealCallingScreen() {
     }
   };
 
-  // Listen for Stream call events
+  // ======================================
+  // STREAM CALL EVENTS
+  // ======================================
+
   useEffect(() => {
-    if (!client || !outgoingCall) return;
+    if (!client || !outgoingCall) {
+      return;
+    }
 
     const { call } = outgoingCall;
 
@@ -219,14 +281,16 @@ export default function RealCallingScreen() {
       );
     };
 
-    // FIX: Join caller before showing the connected call room
+    // Join caller after the receiver accepts
     const onAccepted = async (event) => {
       if (!matchesCall(event)) return;
       if (connectedRef.current) return;
 
       try {
-        // If Stream has not joined automatically, join now
-        if (call.state.callingState !== CallingState.JOINED) {
+        if (
+          call.state.callingState !==
+          CallingState.JOINED
+        ) {
           await call.join({ create: false });
         }
 
@@ -236,13 +300,17 @@ export default function RealCallingScreen() {
         setOutgoingCall(null);
         setActiveCall(outgoingCall);
       } catch (err) {
-        console.error('Caller joining failed:', err);
+        console.error(
+          'Caller joining failed:',
+          err
+        );
 
         outgoingRef.current = null;
         setOutgoingCall(null);
 
         setError(
-          err.message || 'Unable to connect the video call'
+          err.message ||
+            'Unable to connect the video call'
         );
       }
     };
@@ -290,7 +358,10 @@ export default function RealCallingScreen() {
     };
   }, [client, outgoingCall]);
 
-  // 45-second outgoing call countdown
+  // ======================================
+  // OUTGOING CALL COUNTDOWN
+  // ======================================
+
   useEffect(() => {
     if (!outgoingCall) return;
 
@@ -309,16 +380,26 @@ export default function RealCallingScreen() {
       setSecondsLeft(remaining);
 
       if (remaining === 0) {
-        void cancelOutgoing('No Answer', 'timeout');
+        void cancelOutgoing(
+          'No Answer',
+          'timeout'
+        );
       }
     };
 
     updateCountdown();
 
-    const interval = setInterval(updateCountdown, 250);
+    const interval = setInterval(
+      updateCountdown,
+      250
+    );
 
     return () => clearInterval(interval);
   }, [outgoingCall]);
+
+  // ======================================
+  // LEAVE CONNECTED CALL
+  // ======================================
 
   const handleLeaveCall = async () => {
     const current = activeCall;
@@ -337,9 +418,16 @@ export default function RealCallingScreen() {
       }
     } catch (err) {
       console.error('Leave call failed:', err);
-      setError(err.message || 'Unable to leave call');
+
+      setError(
+        err.message || 'Unable to leave call'
+      );
     }
   };
+
+  // ======================================
+  // SEARCH CONTACTS
+  // ======================================
 
   const filteredContacts = contacts.filter(
     (contact) =>
@@ -351,7 +439,11 @@ export default function RealCallingScreen() {
         .includes(search.toLowerCase())
   );
 
-  // Connected call room
+  // ======================================
+  // CONNECTED CALL ROOM
+  // Keep existing RealCallRoom functionality
+  // ======================================
+
   if (activeCall) {
     return (
       <RealCallRoom
@@ -363,223 +455,339 @@ export default function RealCallingScreen() {
     );
   }
 
-  // Outgoing ringing screen
+  // ======================================
+  // OUTGOING RINGING SCREEN
+  // ======================================
+
   if (outgoingCall) {
     return (
-      <div className="min-h-screen bg-gradient-to-b from-violet-950 via-purple-950 to-slate-950 text-white flex flex-col items-center justify-center px-6">
-        <p className="text-purple-300 text-sm tracking-widest mb-10">
-          SPHERIVA CONNECT
-        </p>
+      <div className="min-h-screen bg-[#0B1423] text-white flex flex-col items-center justify-center px-5 py-12">
 
-        <div className="w-28 h-28 rounded-full bg-purple-500/20 flex items-center justify-center text-6xl mb-8">
-          {outgoingCall.type === 'voice' ? '📞' : '📹'}
-        </div>
+        <div className="w-full max-w-md text-center">
 
-        <h1 className="text-3xl font-bold text-center">
-          Calling {outgoingCall.contactName}...
-        </h1>
+          <div className="flex items-center justify-center gap-2 mb-12">
+            <ShieldCheck
+              size={24}
+              className="text-teal-400"
+            />
 
-        <p className="text-purple-200 mt-4">
-          Waiting for an answer
-        </p>
+            <span className="font-bold tracking-[0.16em] text-sm">
+              SPHERIVA CONNECT
+            </span>
+          </div>
 
-        <div className="mt-10 text-center">
-          <p className="text-sm text-purple-300 mb-2">
-            Ringing countdown
+          {/* Avatar */}
+          <div className="relative mx-auto w-32 h-32 mb-9">
+
+            <div className="absolute inset-0 rounded-full bg-teal-400/10 animate-pulse" />
+
+            <div className="absolute inset-3 rounded-full bg-[#153B43] border border-teal-400/20 flex items-center justify-center">
+              {outgoingCall.type === 'voice' ? (
+                <Phone
+                  size={44}
+                  className="text-teal-300"
+                />
+              ) : (
+                <Video
+                  size={44}
+                  className="text-teal-300"
+                />
+              )}
+            </div>
+          </div>
+
+          <p className="text-teal-300 text-xs font-bold tracking-[0.18em] uppercase">
+            {outgoingCall.type === 'voice'
+              ? 'Voice Call'
+              : 'Video Call'}
           </p>
 
-          <p className="text-5xl font-bold tabular-nums">
-            {formatTime(secondsLeft)}
-          </p>
-        </div>
+          <h1 className="text-3xl sm:text-4xl font-bold mt-4 break-words">
+            {outgoingCall.contactName}
+          </h1>
 
-        <button
-          type="button"
-          onClick={() => void cancelOutgoing()}
-          className="mt-14 bg-red-600 hover:bg-red-700 px-10 py-4 rounded-full font-bold text-lg"
-        >
-          Cancel Call
-        </button>
+          <p className="text-slate-300 mt-3">
+            Calling... Waiting for an answer
+          </p>
+
+          {/* Countdown */}
+          <div className="mt-9 rounded-2xl border border-white/10 bg-white/5 px-6 py-5">
+
+            <div className="flex justify-center items-center gap-2 text-slate-400 text-sm">
+              <Clock3 size={17} />
+              Ringing countdown
+            </div>
+
+            <p className="text-4xl font-extrabold tabular-nums mt-3">
+              {formatTime(secondsLeft)}
+            </p>
+          </div>
+
+          {/* Cancel */}
+          <button
+            type="button"
+            onClick={() => void cancelOutgoing()}
+            className="mt-9 inline-flex justify-center items-center gap-3 bg-rose-600 hover:bg-rose-700 px-8 py-4 rounded-2xl font-bold transition"
+          >
+            <PhoneOff size={21} />
+            Cancel Call
+          </button>
+        </div>
       </div>
     );
   }
 
+  // ======================================
+  // PROFESSIONAL REAL CALLING PAGE
+  // ======================================
+
   return (
-    <div className="min-h-screen bg-slate-50 pb-20">
-      <div className="bg-gradient-to-br from-violet-950 via-purple-900 to-indigo-950 text-white px-5 pt-8 pb-12 rounded-b-3xl">
-        <button
-          onClick={() => navigate('/home')}
-          className="text-purple-200 text-sm mb-8"
-        >
-          ← Back to Home
-        </button>
+    <div className="min-h-screen bg-[#F5F7FA] pb-24 text-slate-900">
 
-        <div className="flex items-center justify-between">
-          <div>
-            <p className="text-purple-200 text-sm mb-2">
-              SPHERIVA CONNECT
-            </p>
+      {/* Compact Header */}
+      <header className="bg-[#0B1423] text-white">
 
-            <h1 className="text-3xl font-bold">
-              Stay Connected
-            </h1>
+        <div className="max-w-5xl mx-auto px-5 sm:px-8 pt-6 pb-10">
 
-            <p className="text-purple-200 text-sm mt-2">
-              Your trusted circle, one tap away.
-            </p>
-          </div>
+          <button
+            type="button"
+            onClick={() => navigate('/home')}
+            className="inline-flex items-center gap-2 text-sm text-slate-300 hover:text-white transition"
+          >
+            <ArrowLeft size={17} />
+            Back to Dashboard
+          </button>
 
-          <div className="w-14 h-14 rounded-2xl bg-white/15 flex items-center justify-center text-3xl">
-            ♡
-          </div>
-        </div>
-      </div>
+          <div className="flex items-center gap-3 mt-7">
 
-      <div className="max-w-lg mx-auto px-4 -mt-6 relative">
-        <div className="bg-white rounded-2xl shadow-lg p-5">
-          <div className="flex items-center justify-between mb-5">
-            <h2 className="font-bold text-gray-900">
-              Trusted Circle
-            </h2>
-
-            <span className="text-sm text-purple-700 bg-purple-50 px-3 py-1 rounded-full">
-              {contacts.length} contacts
+            <span className="w-12 h-12 shrink-0 rounded-2xl bg-teal-400/10 border border-teal-300/20 flex items-center justify-center">
+              <Phone
+                size={25}
+                className="text-teal-300"
+              />
             </span>
-          </div>
 
-          <input
-            type="search"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search contacts..."
-            aria-label="Search trusted contacts"
-            className="w-full bg-gray-50 border border-gray-200 rounded-xl p-3 mb-5 outline-none focus:ring-2 focus:ring-purple-400"
-          />
-
-          {calling && (
-            <div
-              role="status"
-              className="bg-purple-50 text-purple-800 rounded-xl p-3 mb-4 text-sm"
-            >
-              Starting secure call...
-            </div>
-          )}
-
-          {notice && (
-            <div
-              role="status"
-              className="bg-amber-50 text-amber-900 rounded-xl p-3 mb-4 text-sm"
-            >
-              {notice}
-            </div>
-          )}
-
-          {error && (
-            <div
-              role="alert"
-              className="bg-red-50 text-red-700 rounded-xl p-3 mb-4 text-sm"
-            >
-              {error}
-            </div>
-          )}
-
-          {loading ? (
-            <p className="text-gray-500 text-center py-8">
-              Loading your contacts...
-            </p>
-          ) : filteredContacts.length === 0 ? (
-            <div className="text-center py-10">
-              <p className="font-medium text-gray-700">
-                {contacts.length
-                  ? 'No matching contacts'
-                  : 'No trusted contacts yet'}
+            <div>
+              <p className="text-xs text-teal-300 font-bold uppercase tracking-[0.15em]">
+                Spheriva Connect
               </p>
 
-              {!contacts.length && (
-                <button
-                  onClick={() => navigate('/contacts')}
-                  className="text-purple-700 font-medium mt-3"
-                >
-                  Add Trusted Contacts
-                </button>
-              )}
+              <h1 className="text-2xl sm:text-3xl font-extrabold mt-1">
+                Real Voice & Video Calls
+              </h1>
             </div>
-          ) : (
-            <div className="space-y-3">
-              {filteredContacts.map((contact) => (
-                <div
-                  key={contact._id}
-                  className="bg-gray-50 border border-gray-100 rounded-2xl p-4 flex items-center gap-3"
-                >
-                  <div className="w-12 h-12 shrink-0 bg-gradient-to-br from-purple-500 to-indigo-600 rounded-full flex items-center justify-center text-white font-bold text-xl">
-                    {contact.name
-                      ?.trim()
-                      .charAt(0)
-                      .toUpperCase() || '?'}
-                  </div>
+          </div>
 
-                  <div className="min-w-0 flex-1">
-                    <p className="font-semibold text-gray-900 truncate">
-                      {contact.name}
-                    </p>
-
-                    <p className="text-xs text-gray-500">
-                      {contact.relationship || 'Trusted Contact'}
-                    </p>
-
-                    <p className="text-xs text-purple-700 mt-1">
-                      Tap voice or video to call
-                    </p>
-                  </div>
-
-                  <button
-                    type="button"
-                    disabled={calling || !client}
-                    onClick={() => requestCall(contact, 'Voice')}
-                    className="w-10 h-10 shrink-0 bg-purple-100 text-purple-700 rounded-full flex items-center justify-center disabled:opacity-50"
-                    aria-label={`Voice call ${contact.name}`}
-                  >
-                    <svg
-                      width="21"
-                      height="21"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="2"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    >
-                      <path d="M22 16.92v3a2 2 0 01-2.18 2A19.79 19.79 0 013 5.18 2 2 0 015 3h3a2 2 0 012 1.72c.12.96.35 1.9.69 2.79a2 2 0 01-.45 2.11L9 10.87a16 16 0 006.13 6.13l1.25-1.24a2 2 0 012.11-.45c.89.34 1.83.57 2.79.69A2 2 0 0122 16.92z" />
-                    </svg>
-                  </button>
-
-                  <button
-                    type="button"
-                    disabled={calling || !client}
-                    onClick={() => requestCall(contact, 'Video')}
-                    className="w-10 h-10 shrink-0 bg-purple-100 text-purple-700 rounded-full flex items-center justify-center disabled:opacity-50"
-                    aria-label={`Video call ${contact.name}`}
-                  >
-                    <svg
-                      width="22"
-                      height="22"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="2"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    >
-                      <rect x="3" y="5" width="13" height="14" rx="2" />
-                      <path d="m16 10 5-3v10l-5-3" />
-                    </svg>
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
+          <p className="text-sm text-slate-300 mt-3 max-w-xl">
+            Choose a trusted contact to start a voice or video call.
+          </p>
         </div>
-      </div>
+      </header>
+
+      {/* Main Container */}
+      <main className="max-w-5xl mx-auto px-4 sm:px-8 pt-7">
+
+        {/* Single wide contacts panel */}
+        <section className="bg-white border border-slate-200 rounded-3xl shadow-sm overflow-hidden">
+
+          {/* Panel Header */}
+          <div className="px-5 sm:px-8 pt-7 pb-5">
+
+            <div className="flex flex-wrap items-center justify-between gap-3">
+
+              <div className="flex items-center gap-3">
+
+                <span className="w-11 h-11 bg-teal-50 text-teal-700 rounded-xl flex items-center justify-center">
+                  <Users size={22} />
+                </span>
+
+                <div>
+                  <h2 className="font-bold text-lg">
+                    Trusted Circle
+                  </h2>
+
+                  <p className="text-xs text-slate-500 mt-1">
+                    Select a contact to connect
+                  </p>
+                </div>
+              </div>
+
+              <span className="text-sm font-semibold text-teal-700 bg-teal-50 rounded-full px-4 py-2">
+                {contacts.length}{' '}
+                {contacts.length === 1
+                  ? 'Contact'
+                  : 'Contacts'}
+              </span>
+            </div>
+
+            {/* Search Bar */}
+            <div className="relative mt-6">
+
+              <Search
+                size={19}
+                className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400"
+              />
+
+              <input
+                type="search"
+                value={search}
+                onChange={(event) =>
+                  setSearch(event.target.value)
+                }
+                placeholder="Search by name or relationship..."
+                aria-label="Search trusted contacts"
+                className="w-full h-12 rounded-xl bg-slate-50 border border-slate-200 py-3 pl-12 pr-4 text-sm text-slate-900 outline-none focus:border-teal-500 focus:ring-2 focus:ring-teal-100 transition"
+              />
+            </div>
+          </div>
+
+          {/* Message Area */}
+          <div className="px-5 sm:px-8">
+
+            {calling && (
+              <div
+                role="status"
+                className="mb-4 p-4 rounded-xl border border-teal-100 bg-teal-50 text-teal-800 text-sm flex items-center gap-3"
+              >
+                <LoaderCircle
+                  size={18}
+                  className="animate-spin"
+                />
+                Starting secure call...
+              </div>
+            )}
+
+            {notice && (
+              <div
+                role="status"
+                className="mb-4 p-4 rounded-xl border border-amber-200 bg-amber-50 text-amber-900 text-sm"
+              >
+                {notice}
+              </div>
+            )}
+
+            {error && (
+              <div
+                role="alert"
+                className="mb-4 p-4 rounded-xl border border-red-200 bg-red-50 text-red-800 text-sm flex items-start gap-2"
+              >
+                <AlertCircle
+                  size={18}
+                  className="shrink-0 mt-0.5"
+                />
+
+                <span>{error}</span>
+              </div>
+            )}
+          </div>
+
+          {/* Contacts */}
+          <div className="px-5 sm:px-8 pb-8">
+
+            {loading ? (
+              <div className="min-h-[220px] flex flex-col justify-center items-center gap-3">
+                <LoaderCircle
+                  size={28}
+                  className="animate-spin text-teal-700"
+                />
+
+                <p className="text-sm text-slate-500">
+                  Loading your contacts...
+                </p>
+              </div>
+            ) : filteredContacts.length === 0 ? (
+              <div className="min-h-[220px] rounded-2xl border border-dashed border-slate-200 bg-slate-50 flex flex-col items-center justify-center text-center p-6">
+
+                <Users
+                  size={29}
+                  className="text-teal-700"
+                />
+
+                <p className="font-semibold text-slate-800 mt-4">
+                  {contacts.length
+                    ? 'No matching contacts'
+                    : 'No trusted contacts yet'}
+                </p>
+
+                {!contacts.length && (
+                  <button
+                    type="button"
+                    onClick={() => navigate('/contacts')}
+                    className="mt-4 inline-flex items-center gap-2 text-sm text-teal-700 hover:text-teal-900 font-bold"
+                  >
+                    Add Trusted Contacts
+                    <ChevronRight size={17} />
+                  </button>
+                )}
+              </div>
+            ) : (
+              <div className="space-y-3">
+
+                {filteredContacts.map((contact) => (
+                  <div
+                    key={contact._id}
+                    className="flex flex-wrap sm:flex-nowrap items-center gap-4 sm:gap-5 rounded-2xl bg-[#F8FAFB] border border-slate-200 p-4 sm:p-5 hover:border-teal-200 hover:bg-white hover:shadow-sm transition"
+                  >
+
+                    {/* Contact Avatar */}
+                    <div className="w-14 h-14 shrink-0 rounded-2xl bg-teal-100 text-teal-800 flex items-center justify-center text-xl font-extrabold">
+                      {contact.name
+                        ?.trim()
+                        .charAt(0)
+                        .toUpperCase() || '?'}
+                    </div>
+
+                    {/* Contact Info */}
+                    <div className="min-w-0 flex-1">
+
+                      <p className="text-base font-bold text-slate-900 truncate">
+                        {contact.name}
+                      </p>
+
+                      <p className="text-sm text-slate-500 mt-1">
+                        {contact.relationship ||
+                          'Trusted Contact'}
+                      </p>
+                    </div>
+
+                    {/* Working Call Buttons */}
+                    <div className="w-full sm:w-auto flex items-center gap-3 justify-end">
+
+                      {/* Voice Call */}
+                      <button
+                        type="button"
+                        disabled={calling || !client}
+                        onClick={() =>
+                          requestCall(contact, 'Voice')
+                        }
+                        aria-label={`Voice call ${contact.name}`}
+                        title={`Voice call ${contact.name}`}
+                        className="w-12 h-12 rounded-xl bg-teal-50 text-teal-700 hover:bg-teal-700 hover:text-white disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center transition"
+                      >
+                        <Phone size={21} />
+                      </button>
+
+                      {/* Video Call */}
+                      <button
+                        type="button"
+                        disabled={calling || !client}
+                        onClick={() =>
+                          requestCall(contact, 'Video')
+                        }
+                        aria-label={`Video call ${contact.name}`}
+                        title={`Video call ${contact.name}`}
+                        className="w-12 h-12 rounded-xl bg-sky-50 text-sky-700 hover:bg-sky-700 hover:text-white disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center transition"
+                      >
+                        <Video size={22} />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </section>
+      </main>
     </div>
   );
 }

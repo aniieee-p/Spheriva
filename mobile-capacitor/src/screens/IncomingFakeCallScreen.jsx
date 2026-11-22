@@ -1,3 +1,4 @@
+import '../styles/secondary-ui.css';
 import React, { useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import useFakeCallAlert from '../components/useFakeCallAlert';
@@ -26,7 +27,7 @@ export default function IncomingFakeCallScreen() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-slate-900 via-purple-950 to-slate-950 text-white flex flex-col items-center justify-between px-6 py-16">
+    <div className="sph-fake-incoming min-h-screen bg-gradient-to-b from-slate-900 via-purple-950 to-slate-950 text-white flex flex-col items-center justify-between px-6 py-16">
 
       <div className="text-center">
         <p className="text-sm tracking-widest text-purple-200 uppercase mb-8">
