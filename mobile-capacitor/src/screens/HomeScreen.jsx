@@ -1,36 +1,73 @@
+
 /**
- * Home Screen
- * Main dashboard after login - shows safety session controls
+ * SPHERIVA
+ * Safety Control Center
+ *
+ * Existing SOS and safety tracking functionality
+ * with redesigned professional UI.
  */
 
 import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { startSafetySession, stopSafetySession, getSafetySessionStatus } from '../services/trackingService';
+
+import {
+  startSafetySession,
+  stopSafetySession,
+  getSafetySessionStatus,
+} from '../services/trackingService';
+
 import { Geolocation } from '@capacitor/geolocation';
 import apiService from '../services/api.service';
 
+import {
+  ShieldCheck,
+  Siren,
+  Navigation,
+  MapPin,
+  ArrowLeft,
+  Clock3,
+  CheckCircle2,
+  AlertTriangle,
+  Users,
+  Phone,
+  ChevronRight,
+  RefreshCw,
+  Activity,
+  LockKeyhole,
+} from 'lucide-react';
+
 const HomeScreen = () => {
   const navigate = useNavigate();
-  const { user, logout } = useAuth();
+  const { user } = useAuth();
 
-  // Session state
+  // ==========================================
+  // SESSION STATES
+  // ==========================================
+
   const [sessionActive, setSessionActive] = useState(false);
   const [cleanupPending, setCleanupPending] = useState(false);
   const [locationSyncPending, setLocationSyncPending] = useState(false);
   const [sessionId, setSessionId] = useState(null);
+
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [successMessage, setSuccessMessage] = useState(null);
+
   const [sosLoading, setSosLoading] = useState(false);
   const sosInFlight = useRef(false);
 
-  // Check for active session on mount and when component becomes visible
+  // ==========================================
+  // CHECK SESSION STATUS
+  // ==========================================
+
   useEffect(() => {
     const checkSessionStatus = () => {
       const status = getSafetySessionStatus();
       const isActive = status.sessionState === 'active';
+
       setLocationSyncPending(status.locationSyncPending);
+
       const needsCleanup =
         status.backendCleanupPending ||
         status.watcherCleanupPending ||
@@ -38,145 +75,220 @@ const HomeScreen = () => {
         status.sessionState === 'failed_watcher_stuck' ||
         status.sessionState === 'backend_create_unknown' ||
         status.sessionState === 'watcher_reconciliation_pending';
+
       setSessionActive(isActive);
       setCleanupPending(needsCleanup);
+
       if (status.recoveryReason === 'backend_session_id_unknown') {
-        setError('A previous create request may have made a server session, but its ID is unavailable. The backend currently cannot look up that session.');
-      } else if (status.recoveryReason === 'active_session_already_exists') {
-        setError('An active safety session already exists for this account, possibly on another device. This device will not adopt or end it.');
+        setError(
+          'A previous create request may have made a server session, but its ID is unavailable. The backend currently cannot look up that session.'
+        );
+      } else if (
+        status.recoveryReason === 'active_session_already_exists'
+      ) {
+        setError(
+          'An active safety session already exists for this account, possibly on another device. This device will not adopt or end it.'
+        );
       } else if (status.recoveryReason === 'watcher_id_unavailable') {
-        setError('A previous native watcher may still exist, but the plugin cannot discover its ID. New sessions are blocked.');
+        setError(
+          'A previous native watcher may still exist, but the plugin cannot discover its ID. New sessions are blocked.'
+        );
       } else if (status.recoveryReason === 'watcher_removal_failed') {
-        setError('Removing the previous native watcher failed. Retry cleanup before starting another session.');
+        setError(
+          'Removing the previous native watcher failed. Retry cleanup before starting another session.'
+        );
       } else if (status.recoveryReason === 'tracking_state_read_failed') {
-        setError('Saved tracking state could not be read. A new session is blocked until recovery succeeds.');
+        setError(
+          'Saved tracking state could not be read. A new session is blocked until recovery succeeds.'
+        );
       } else if (!needsCleanup) {
         setError(null);
       }
-      if (isActive) {
-        setSessionId(status.activeSessionId);
-      } else if (needsCleanup) {
+
+      if (isActive || needsCleanup) {
         setSessionId(status.activeSessionId);
       } else {
         setSessionId(null);
       }
     };
 
-    // Check on mount
     checkSessionStatus();
 
-    // Check when returning to this screen (optional: add visibility listener)
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'visible') {
         checkSessionStatus();
       }
     };
 
-    document.addEventListener('visibilitychange', handleVisibilityChange);
     const handleLocationSyncState = (event) => {
       setLocationSyncPending(event.detail?.pending === true);
     };
-    window.addEventListener('spheriva:location-sync-state', handleLocationSyncState);
+
+    document.addEventListener(
+      'visibilitychange',
+      handleVisibilityChange
+    );
+
+    window.addEventListener(
+      'spheriva:location-sync-state',
+      handleLocationSyncState
+    );
 
     return () => {
-      document.removeEventListener('visibilitychange', handleVisibilityChange);
-      window.removeEventListener('spheriva:location-sync-state', handleLocationSyncState);
+      document.removeEventListener(
+        'visibilitychange',
+        handleVisibilityChange
+      );
+
+      window.removeEventListener(
+        'spheriva:location-sync-state',
+        handleLocationSyncState
+      );
     };
   }, []);
 
-  // Keep an uncertain request ID so a retry cannot create a second SOS record.
+  // ==========================================
+  // EMERGENCY SOS HANDLER
+  // ==========================================
+
   const handleSOS = async () => {
     if (sosInFlight.current) return;
 
     const accountId = user?.id || user?._id;
+
     if (!accountId) {
       setError('Please sign in before recording an SOS alert.');
       return;
     }
 
     const pendingKey = `spheriva:sos-pending:${accountId}`;
+
     let pendingRequest;
+
     try {
       const stored = sessionStorage.getItem(pendingKey);
+
       pendingRequest = stored ? JSON.parse(stored) : null;
     } catch {
-      setError('Could not access SOS retry state. No request was sent.');
+      setError(
+        'Could not access SOS retry state. No request was sent.'
+      );
       return;
     }
 
     const isRetry = Boolean(pendingRequest?.clientRequestId);
+
     const confirmed = window.confirm(
       isRetry
         ? 'A previous SOS request may already be recorded. Retry the SAME request to check its result?'
         : 'Record an emergency SOS alert? This saves an alert on the server, but does not yet confirm notifications to trusted contacts.'
     );
+
     if (!confirmed) return;
 
     sosInFlight.current = true;
+
     setSosLoading(true);
     setError(null);
     setSuccessMessage(null);
 
     try {
       let alertData = pendingRequest;
+
       if (!isRetry) {
         if (!globalThis.crypto?.getRandomValues) {
-          throw new Error('Secure request ID generation is unavailable. SOS was not sent.');
+          throw new Error(
+            'Secure request ID generation is unavailable. SOS was not sent.'
+          );
         }
+
         const bytes = new Uint8Array(16);
+
         globalThis.crypto.getRandomValues(bytes);
-        const clientRequestId = Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
+
+        const clientRequestId = Array.from(
+          bytes,
+          (byte) => byte.toString(16).padStart(2, '0')
+        ).join('');
+
         alertData = {
           clientRequestId,
-          situation: 'User triggered emergency SOS'
+          situation: 'User triggered emergency SOS',
         };
 
-        // A missing location must not prevent recording an SOS alert.
+        // Location failure must not silently block SOS.
+
         try {
           const position = await Geolocation.getCurrentPosition({
             enableHighAccuracy: true,
             timeout: 10000,
-            maximumAge: 0
+            maximumAge: 0,
           });
-          if (Number.isFinite(position?.coords?.latitude) && Number.isFinite(position?.coords?.longitude)) {
+
+          if (
+            Number.isFinite(position?.coords?.latitude) &&
+            Number.isFinite(position?.coords?.longitude)
+          ) {
             alertData.latitude = position.coords.latitude;
             alertData.longitude = position.coords.longitude;
+
             if (Number.isFinite(position.coords.accuracy)) {
               alertData.accuracy = position.coords.accuracy;
             }
           }
         } catch (locationError) {
           console.warn('SOS location unavailable:', locationError);
+
           const continueWithoutLocation = window.confirm(
             'GPS location is unavailable. Record the SOS alert without location?'
           );
+
           if (!continueWithoutLocation) return;
         }
 
-        // Attach only a confirmed active session, not a pending cleanup session.
         if (sessionActive && sessionId && !cleanupPending) {
           alertData.sessionId = sessionId;
         }
-        sessionStorage.setItem(pendingKey, JSON.stringify(alertData));
+
+        sessionStorage.setItem(
+          pendingKey,
+          JSON.stringify(alertData)
+        );
       }
 
       const result = await apiService.sendEmergencyAlert(alertData);
+
       if (result?.success === true) {
         sessionStorage.removeItem(pendingKey);
-        setSuccessMessage('SOS alert recorded on the server. Trusted-contact notification is not confirmed.');
+
+        setSuccessMessage(
+          'SOS alert recorded on the server. Trusted-contact notification is not confirmed.'
+        );
       } else {
-        // Keep the same ID if the server result is ambiguous.
-        setError(result?.message || 'SOS result is uncertain. Retry using the same request.');
+        setError(
+          result?.message ||
+          'SOS result is uncertain. Retry using the same request.'
+        );
       }
     } catch (err) {
-      // 4xx responses are definitive failures; network/timeout errors are ambiguous.
-      if (err?.status >= 400 && err?.status < 500 && err.status !== 408 && err.status !== 429) {
-        try { sessionStorage.removeItem(pendingKey); } catch { /* no-op */ }
+      if (
+        err?.status >= 400 &&
+        err?.status < 500 &&
+        err.status !== 408 &&
+        err.status !== 429
+      ) {
+        try {
+          sessionStorage.removeItem(pendingKey);
+        } catch {
+          // No operation
+        }
       }
+
       setError(
         err?.status === 0
           ? 'Network or timeout error. SOS may have been recorded. Retry using the same request ID when connected.'
-          : (err?.message || 'Unable to confirm SOS alert. Please try again.')
+          : err?.message ||
+            'Unable to confirm SOS alert. Please try again.'
       );
     } finally {
       sosInFlight.current = false;
@@ -184,14 +296,9 @@ const HomeScreen = () => {
     }
   };
 
-  const handleLogout = async () => {
-    const result = await logout();
-    if (!result?.success) {
-      setError(result?.message || 'Tracking cleanup failed. Please retry before logging out.');
-      return;
-    }
-    navigate('/login');
-  };
+  // ==========================================
+  // START SAFETY SESSION
+  // ==========================================
 
   const handleStartSession = async () => {
     setLoading(true);
@@ -201,65 +308,102 @@ const HomeScreen = () => {
     try {
       const result = await startSafetySession({
         userId: user?.id || user?._id,
-        backgroundMessage: `${user?.name || 'User'} is being tracked for safety`,
+        backgroundMessage: `${
+          user?.name || 'User'
+        } is being tracked for safety`,
         backgroundTitle: 'Spheriva Safety Session Active',
-        distanceFilter: 10 // Update every 10 meters
+        distanceFilter: 10,
       });
 
       if (result.success) {
         setSessionActive(true);
         setCleanupPending(false);
         setSessionId(result.sessionId);
-        setSuccessMessage('Safety session started successfully!');
+
+        setSuccessMessage(
+          'Safety session started successfully!'
+        );
+
         setTimeout(() => setSuccessMessage(null), 3000);
       } else {
         setSessionActive(false);
-        const needsCleanup = result.cleanupPending === true ||
+
+        const needsCleanup =
+          result.cleanupPending === true ||
           result.backendCleanupPending === true ||
           result.watcherCleanupPending === true;
+
         setCleanupPending(needsCleanup);
         setSessionId(result.sessionId || null);
-        // Handle specific error reasons
+
         let errorMsg = 'Failed to start safety session';
+
         if (result.reason === 'invalid_options') {
-          errorMsg = 'Invalid session options: ' + result.errors.join(', ');
-        } else if (result.reason === 'location_permission_denied') {
-          errorMsg = 'Location permission is required. Please enable it in Settings.';
+          errorMsg =
+            'Invalid session options: ' +
+            result.errors.join(', ');
+        } else if (
+          result.reason === 'location_permission_denied'
+        ) {
+          errorMsg =
+            'Location permission is required. Please enable it in Settings.';
         } else if (result.reason === 'stuck_watcher_exists') {
-          errorMsg = result.note || 'Previous session cleanup required. Please retry cleanup.';
+          errorMsg =
+            result.note ||
+            'Previous session cleanup required. Please retry cleanup.';
         } else if (result.reason === 'invalid_state') {
-          errorMsg = result.note || `Cannot start session in current state: ${result.currentState}`;
-        } else if (result.reason === 'backend_create_result_unknown' ||
-                   result.reason === 'backend_session_id_unknown') {
-          errorMsg = 'The server may have created a session but its ID was not received. Another session is blocked until the backend can look it up.';
+          errorMsg =
+            result.note ||
+            `Cannot start session in current state: ${result.currentState}`;
+        } else if (
+          result.reason === 'backend_create_result_unknown' ||
+          result.reason === 'backend_session_id_unknown'
+        ) {
+          errorMsg =
+            'The server may have created a session but its ID was not received. Another session is blocked until the backend can look it up.';
         } else if (result.reason === 'watcher_id_unavailable') {
-          errorMsg = 'A previous watcher may still be running, but its ID was not saved and the plugin cannot list watchers. Do not start another session.';
+          errorMsg =
+            'A previous watcher may still be running, but its ID was not saved and the plugin cannot list watchers. Do not start another session.';
         } else if (result.watcherCleanupPending) {
-          errorMsg = 'Native watcher cleanup is pending. Retry cleanup before starting or logging out.';
+          errorMsg =
+            'Native watcher cleanup is pending. Retry cleanup before starting or logging out.';
         } else if (result.backendCleanupPending) {
-          errorMsg = 'The session could not start and backend cleanup is pending. Retry cleanup before starting again.';
+          errorMsg =
+            'The session could not start and backend cleanup is pending. Retry cleanup before starting again.';
         } else {
           errorMsg = result.note || result.reason || errorMsg;
         }
+
         setError(errorMsg);
       }
     } catch (err) {
       console.error('Error starting session:', err);
+
       const status = getSafetySessionStatus();
+
       const needsCleanup =
         status.backendCleanupPending ||
         status.watcherCleanupPending ||
         status.sessionState === 'backend_create_unknown' ||
         status.sessionState === 'watcher_reconciliation_pending' ||
         status.sessionState === 'failed_watcher_stuck';
+
       setSessionActive(status.sessionState === 'active');
       setCleanupPending(needsCleanup);
-      setSessionId(needsCleanup ? status.activeSessionId : null);
+
+      setSessionId(
+        needsCleanup ? status.activeSessionId : null
+      );
+
       setError('Unexpected error: ' + err.message);
     } finally {
       setLoading(false);
     }
   };
+
+  // ==========================================
+  // STOP SESSION / RETRY CLEANUP
+  // ==========================================
 
   const handleStopSession = async () => {
     setLoading(true);
@@ -273,288 +417,519 @@ const HomeScreen = () => {
         setSessionActive(false);
         setCleanupPending(false);
         setSessionId(null);
-        setLocationSyncPending(result.locationSyncPending === true);
+
+        setLocationSyncPending(
+          result.locationSyncPending === true
+        );
+
         setSuccessMessage(
           result.locationSyncPending
             ? 'Safety session ended, but the latest location could not be synced.'
             : 'Safety session stopped successfully!'
         );
+
         setTimeout(() => setSuccessMessage(null), 3000);
       } else {
         setSessionActive(false);
-        const needsCleanup = result.cleanupPending === true ||
+
+        const needsCleanup =
+          result.cleanupPending === true ||
           result.backendCleanupPending === true ||
           result.watcherCleanupPending === true ||
           result.reason === 'watcher_removal_failed';
+
         setCleanupPending(needsCleanup);
-        setSessionId(needsCleanup ? (result.sessionId || result.stoppedSessionId || sessionId) : null);
+
+        setSessionId(
+          needsCleanup
+            ? result.sessionId ||
+              result.stoppedSessionId ||
+              sessionId
+            : null
+        );
+
         if (result.locationSyncPending !== undefined) {
-          setLocationSyncPending(result.locationSyncPending);
+          setLocationSyncPending(
+            result.locationSyncPending
+          );
         }
+
         let errorMsg = 'Failed to stop safety session';
+
         if (result.reason === 'invalid_state') {
-          errorMsg = `Cannot stop session in current state: ${result.currentState}`;
-        } else if (result.reason === 'watcher_removal_failed') {
-          errorMsg = 'Tracking is still running because the watcher could not be removed. Retry cleanup before logging out.';
-        } else if (result.reason === 'watcher_id_unavailable') {
-          errorMsg = 'A previous native watcher may remain, but the plugin cannot discover its ID. New sessions remain blocked.';
-        } else if (result.reason === 'backend_session_id_unknown') {
-          errorMsg = 'The server may have created a session but the client did not receive its ID. Backend recovery is required before another session can start.';
+          errorMsg =
+            `Cannot stop session in current state: ${result.currentState}`;
+        } else if (
+          result.reason === 'watcher_removal_failed'
+        ) {
+          errorMsg =
+            'Tracking is still running because the watcher could not be removed. Retry cleanup before logging out.';
+        } else if (
+          result.reason === 'watcher_id_unavailable'
+        ) {
+          errorMsg =
+            'A previous native watcher may remain, but the plugin cannot discover its ID. New sessions remain blocked.';
+        } else if (
+          result.reason === 'backend_session_id_unknown'
+        ) {
+          errorMsg =
+            'The server may have created a session but the client did not receive its ID. Backend recovery is required before another session can start.';
         } else if (result.watcherCleanupPending) {
-          errorMsg = 'Native watcher cleanup is still pending. Retry cleanup before starting another session.';
+          errorMsg =
+            'Native watcher cleanup is still pending. Retry cleanup before starting another session.';
         } else if (result.backendCleanupPending) {
-          errorMsg = 'Tracking stopped, but backend session cleanup is pending. Retry to confirm the session has ended.';
+          errorMsg =
+            'Tracking stopped, but backend session cleanup is pending. Retry to confirm the session has ended.';
         } else {
-          errorMsg = result.note || result.reason || errorMsg;
+          errorMsg =
+            result.note || result.reason || errorMsg;
         }
+
         setError(errorMsg);
       }
     } catch (err) {
       console.error('Error stopping session:', err);
+
       const status = getSafetySessionStatus();
+
       const needsCleanup =
         status.backendCleanupPending ||
         status.watcherCleanupPending ||
         status.sessionState === 'backend_create_unknown' ||
         status.sessionState === 'watcher_reconciliation_pending' ||
         status.sessionState === 'failed_watcher_stuck';
+
       setSessionActive(status.sessionState === 'active');
       setCleanupPending(needsCleanup);
-      setSessionId(needsCleanup ? status.activeSessionId : null);
+
+      setSessionId(
+        needsCleanup ? status.activeSessionId : null
+      );
+
       setError('Unexpected error: ' + err.message);
     } finally {
       setLoading(false);
     }
   };
 
+  // ==========================================
+  // PROFESSIONAL SAFETY CONTROL CENTER UI
+  // ==========================================
+
   return (
-    <div className="min-h-screen bg-gray-100">
-      {/* Header */}
-      <div className="bg-gradient-to-r from-blue-600 to-purple-600 text-white p-6 shadow-lg">
-        <div className="flex justify-between items-center">
-          <div>
-            <h1 className="text-2xl font-bold">Spheriva</h1>
-            <p className="text-sm opacity-90">Your Safety Companion</p>
-          </div>
+    <div className="min-h-screen bg-[#F5F7FA] text-slate-900">
+
+      {/* Top Navigation */}
+      <header className="bg-[#0B1423] text-white">
+        <div className="max-w-6xl mx-auto px-5 sm:px-8 py-5 flex items-center justify-between gap-4">
+
           <button
-            onClick={handleLogout}
-            className="bg-white/20 hover:bg-white/30 px-4 py-2 rounded-lg text-sm font-medium transition"
+            type="button"
+            onClick={() => navigate('/home')}
+            className="inline-flex items-center gap-2 text-sm text-slate-300 hover:text-white transition"
           >
-            Logout
+            <ArrowLeft size={18} />
+            Back to Dashboard
           </button>
+
+          <div className="inline-flex items-center gap-2">
+            <ShieldCheck
+              size={25}
+              className="text-teal-400"
+            />
+
+            <span className="font-extrabold tracking-widest text-lg">
+              SPHERIVA
+            </span>
+          </div>
         </div>
-      </div>
+      </header>
 
-      {/* User Info Card */}
-      <div className="p-4">
-        <div className="bg-white rounded-xl shadow-md p-6 mb-4">
-          <h2 className="text-xl font-bold text-gray-800 mb-2">
-            Welcome, {user?.name || 'User'}!
-          </h2>
-          <p className="text-gray-600 text-sm">{user?.email}</p>
-          <p className="text-gray-600 text-sm">{user?.phoneNumber}</p>
-        </div>
+      <main className="max-w-6xl mx-auto px-5 sm:px-8 py-8 space-y-6">
 
-        {/* Safety Session Card */}
-        <div className="bg-white rounded-xl shadow-md p-6 mb-4">
-          <h3 className="text-lg font-bold text-gray-800 mb-4">Safety Session</h3>
+        {/* Page Introduction */}
+        <section className="flex flex-wrap items-end justify-between gap-4">
 
-          {/* Status Messages */}
-          {error && (
-            <div className="mb-4 p-3 bg-red-100 border border-red-400 text-red-700 rounded-lg text-sm">
-              {error}
+          <div>
+            <p className="flex items-center gap-2 text-teal-700 font-bold text-xs uppercase tracking-[0.18em]">
+              <ShieldCheck size={17} />
+              Personal Safety
+            </p>
+
+            <h1 className="text-3xl sm:text-4xl font-extrabold tracking-tight mt-3">
+              Safety Control Center
+            </h1>
+
+            <p className="text-slate-500 text-sm sm:text-base mt-3 max-w-2xl">
+              Manage safety sessions, location tracking,
+              and emergency SOS alerts in one place.
+            </p>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => navigate('/history')}
+            className="inline-flex items-center gap-2 rounded-xl bg-white border border-slate-200 px-4 py-3 text-sm font-semibold hover:border-teal-300 hover:shadow-sm transition"
+          >
+            <Clock3 size={18} />
+            View Session History
+          </button>
+
+        </section>
+
+        {/* Error Feedback */}
+        {error && (
+          <div
+            role="alert"
+            className="rounded-2xl bg-red-50 border border-red-200 p-5 flex items-start gap-3 text-red-900"
+          >
+            <AlertTriangle
+              size={21}
+              className="shrink-0 mt-0.5"
+            />
+
+            <div>
+              <p className="font-bold text-sm">
+                Action Needs Attention
+              </p>
+
+              <p className="text-sm mt-1 leading-relaxed">
+                {error}
+              </p>
             </div>
-          )}
+          </div>
+        )}
 
-          {successMessage && (
-            <div className="mb-4 p-3 bg-green-100 border border-green-400 text-green-700 rounded-lg text-sm">
+        {/* Success Feedback */}
+        {successMessage && (
+          <div
+            role="status"
+            className="rounded-2xl bg-teal-50 border border-teal-200 p-5 flex items-start gap-3 text-teal-900"
+          >
+            <CheckCircle2
+              size={21}
+              className="shrink-0 mt-0.5"
+            />
+
+            <p className="text-sm font-medium leading-relaxed">
               {successMessage}
-            </div>
-          )}
+            </p>
+          </div>
+        )}
 
-          {/* Active Session Info */}
-          {(sessionActive || cleanupPending) && (
-            <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
-              <div className="flex items-center">
-                <div className={`w-3 h-3 rounded-full mr-2 ${sessionActive ? 'bg-green-500 animate-pulse' : 'bg-amber-500'}`}></div>
-                <p className="text-sm font-medium text-blue-900">
-                  {sessionActive ? 'Session Active' : 'Session cleanup pending'}
-                </p>
+        {/* Main Cards */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
+
+          {/* ===================================
+              SAFETY SESSION
+          =================================== */}
+
+          <section className="bg-white border border-slate-200 rounded-3xl shadow-sm overflow-hidden">
+
+            <div className="p-6 sm:p-8">
+
+              <div className="flex items-start justify-between gap-3">
+
+                <div className="w-14 h-14 bg-teal-50 rounded-2xl text-teal-700 flex items-center justify-center">
+                  <Navigation size={28} />
+                </div>
+
+                <span
+                  className={`text-xs font-bold px-3 py-2 rounded-full ${
+                    cleanupPending
+                      ? 'bg-amber-100 text-amber-800'
+                      : sessionActive
+                      ? 'bg-teal-100 text-teal-800'
+                      : 'bg-slate-100 text-slate-600'
+                  }`}
+                >
+                  {cleanupPending
+                    ? 'Cleanup Pending'
+                    : sessionActive
+                    ? 'Tracking Active'
+                    : 'Session Inactive'}
+                </span>
               </div>
-              {sessionId && (
-                <p className="text-xs text-blue-700 mt-1 font-mono">
-                  ID: {sessionId.substring(0, 20)}...
-                </p>
+
+              <h2 className="text-2xl font-bold mt-6">
+                Safety Session
+              </h2>
+
+              <p className="text-slate-500 text-sm leading-relaxed mt-2">
+                Start safety tracking before a journey.
+                Monitor session state and stop tracking
+                when you are finished.
+              </p>
+
+              {/* Session Details */}
+              <div className="mt-6 bg-[#F6FAF9] rounded-2xl p-5 border border-teal-100">
+
+                <div className="flex items-start gap-3">
+
+                  <MapPin
+                    size={22}
+                    className="shrink-0 text-teal-700"
+                  />
+
+                  <div>
+                    <p className="text-sm font-bold text-slate-900">
+                      Current Tracking Status
+                    </p>
+
+                    <p className="text-sm text-slate-600 mt-2 leading-relaxed">
+                      {cleanupPending
+                        ? 'A previous safety session requires cleanup or recovery before another session can start.'
+                        : sessionActive
+                        ? 'This device reports an active safety tracking session.'
+                        : 'No active safety tracking session is reported on this device.'}
+                    </p>
+                  </div>
+
+                </div>
+
+                {sessionId && (
+                  <div className="mt-4 border-t border-teal-100 pt-4">
+                    <p className="text-xs text-slate-500 font-semibold">
+                      Session Reference
+                    </p>
+
+                    <p className="text-xs font-mono text-slate-600 break-all mt-1">
+                      {sessionId}
+                    </p>
+                  </div>
+                )}
+
+                {locationSyncPending && (
+                  <div
+                    role="status"
+                    className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-3 text-amber-900 text-xs leading-relaxed"
+                  >
+                    {sessionActive
+                      ? 'A location update could not sync. Tracking continues and will retry with a newer update.'
+                      : 'The latest location could not sync before tracking stopped.'}
+                  </div>
+                )}
+
+              </div>
+
+              {/* Functional Session Controls */}
+              {!sessionActive && !cleanupPending ? (
+                <button
+                  type="button"
+                  onClick={handleStartSession}
+                  disabled={loading || sosLoading}
+                  className="w-full mt-6 bg-teal-700 hover:bg-teal-800 disabled:opacity-50 disabled:cursor-not-allowed rounded-xl px-5 py-4 text-white font-bold flex items-center justify-center gap-2 transition"
+                >
+                  <Navigation size={20} />
+
+                  {loading
+                    ? 'Starting Session...'
+                    : 'Start Safety Session'}
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={handleStopSession}
+                  disabled={loading || sosLoading}
+                  className="w-full mt-6 bg-slate-900 hover:bg-slate-800 disabled:opacity-50 disabled:cursor-not-allowed rounded-xl px-5 py-4 text-white font-bold flex items-center justify-center gap-2 transition"
+                >
+                  <RefreshCw size={20} />
+
+                  {loading
+                    ? 'Processing Session...'
+                    : cleanupPending
+                    ? 'Retry Session Cleanup'
+                    : 'Stop Safety Session'}
+                </button>
               )}
-            </div>
-          )}
-          {locationSyncPending && (
-            <div role="status" className="mb-4 p-3 bg-amber-50 border border-amber-200 text-amber-800 rounded-lg text-sm">
-              {sessionActive
-                ? 'A location update could not sync. Tracking will continue and retry with a newer update.'
-                : 'The latest location could not sync before tracking stopped.'}
-            </div>
-          )}
 
-          <div className="space-y-3">
-            {/* Start/Stop Session Button */}
-            {!sessionActive && !cleanupPending ? (
-              <button
-                className="w-full bg-green-600 hover:bg-green-700 disabled:bg-gray-400 disabled:cursor-not-allowed text-white py-4 rounded-lg font-semibold transition shadow-lg flex items-center justify-center"
-                onClick={handleStartSession}
-                disabled={loading}
-              >
-                {loading ? (
-                  <>
-                    <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin mr-2"></div>
-                    Starting Session...
-                  </>
-                ) : (
-                  <>
-                    <svg className="w-6 h-6 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                    </svg>
-                    Start Safety Session
-                  </>
-                )}
-              </button>
-            ) : (
-              <button
-                className="w-full bg-red-600 hover:bg-red-700 disabled:bg-gray-400 disabled:cursor-not-allowed text-white py-4 rounded-lg font-semibold transition shadow-lg flex items-center justify-center"
-                onClick={handleStopSession}
-                disabled={loading}
-              >
-                {loading ? (
-                  <>
-                    <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin mr-2"></div>
-                    Stopping Session...
-                  </>
-                ) : (
-                  <>
-                    <svg className="w-6 h-6 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 10a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1v-4z" />
-                    </svg>
-                    {cleanupPending ? 'Retry Session Cleanup' : 'Stop Safety Session'}
-                  </>
-                )}
-              </button>
-            )}
+              <p className="text-xs text-slate-500 text-center mt-4 leading-relaxed">
+                GPS permission may be requested.
+                Session actions use the existing tracking service.
+              </p>
 
-            {/* Emergency SOS Button */}
-            <button
-              className="w-full bg-red-600 hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed text-white py-4 rounded-lg font-semibold transition shadow-lg flex items-center justify-center"
-              onClick={handleSOS}
-              disabled={sosLoading}
-            >
-              <svg className="w-6 h-6 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-              </svg>
-              {sosLoading ? 'Recording SOS...' : 'Emergency SOS'}
-            </button>
-          </div>
+            </div>
+          </section>
+
+          {/* ===================================
+              EMERGENCY SOS
+          =================================== */}
+
+          <section className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-[#101B2B] via-[#301B2B] to-[#581B32] text-white shadow-sm">
+
+            <div className="absolute -right-20 -top-20 w-64 h-64 rounded-full bg-rose-500/10 blur-3xl pointer-events-none" />
+
+            <div className="relative p-6 sm:p-8">
+
+              <div className="w-14 h-14 bg-rose-500/20 border border-rose-300/20 rounded-2xl flex items-center justify-center text-rose-200">
+                <Siren size={29} />
+              </div>
+
+              <span className="inline-flex items-center gap-2 rounded-full border border-rose-300/20 bg-rose-400/10 text-rose-200 px-3 py-2 mt-6 text-xs font-bold">
+                <Activity size={15} />
+                Server Alert Recording
+              </span>
+
+              <h2 className="text-3xl font-extrabold mt-5">
+                Emergency SOS
+              </h2>
+
+              <p className="text-slate-300 text-sm mt-4 leading-relaxed">
+                In an emergency, you can record an SOS alert
+                on the backend. GPS coordinates will be
+                attached when available.
+              </p>
+
+              <button
+                type="button"
+                onClick={handleSOS}
+                disabled={sosLoading || loading}
+                className="mt-7 w-full bg-rose-600 hover:bg-rose-700 disabled:opacity-50 disabled:cursor-not-allowed rounded-xl px-5 py-4 text-white font-bold flex justify-center items-center gap-3 transition"
+              >
+                <Siren size={22} />
+
+                {sosLoading
+                  ? 'Recording SOS...'
+                  : 'Record Emergency SOS'}
+              </button>
+
+              <div className="mt-6 rounded-xl border border-white/10 bg-white/10 p-4">
+
+                <div className="flex items-start gap-3">
+                  <AlertTriangle
+                    size={20}
+                    className="shrink-0 text-amber-300"
+                  />
+
+                  <div>
+                    <p className="text-sm font-bold text-white">
+                      Important Safety Information
+                    </p>
+
+                    <p className="text-xs text-slate-200 mt-2 leading-relaxed">
+                      SOS recording does not confirm
+                      notification delivery to trusted contacts
+                      or emergency services.
+                    </p>
+
+                    <p className="text-xs text-slate-200 mt-2">
+                      For immediate emergency assistance
+                      in India, dial 112.
+                    </p>
+                  </div>
+                </div>
+
+              </div>
+
+            </div>
+          </section>
+
         </div>
 
-        {/* Quick Actions */}
-        <div className="bg-white rounded-xl shadow-md p-6">
-          <h3 className="text-lg font-bold text-gray-800 mb-4">Quick Actions</h3>
+        {/* ===================================
+            QUICK ACCESS
+        =================================== */}
 
-          <div className="grid grid-cols-2 gap-3">
-            {/* Session History */}
-            <button
-              className="bg-blue-50 hover:bg-blue-100 p-4 rounded-lg transition text-center"
-              onClick={() => navigate('/history')}
-            >
-              <svg className="w-8 h-8 mx-auto mb-2 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-              </svg>
-              <p className="text-sm font-medium text-gray-700">History</p>
-            </button>
+        <section>
+          <div className="flex items-center gap-3 mb-5">
+            <LockKeyhole
+              size={20}
+              className="text-teal-700"
+            />
 
-            {/* Trusted Contacts */}
+            <h2 className="text-lg font-bold">
+              Quick Safety Access
+            </h2>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+
+            {/* Contacts */}
             <button
-              className="bg-purple-50 hover:bg-purple-100 p-4 rounded-lg transition text-center"
+              type="button"
               onClick={() => navigate('/contacts')}
+              className="bg-white border border-slate-200 hover:border-teal-300 hover:shadow-md rounded-2xl p-5 flex items-center gap-4 text-left transition"
             >
-              <svg className="w-8 h-8 mx-auto mb-2 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
-              </svg>
-              <p className="text-sm font-medium text-gray-700">Contacts</p>
+              <span className="w-12 h-12 bg-teal-50 rounded-xl flex items-center justify-center text-teal-700">
+                <Users size={23} />
+              </span>
+
+              <span className="flex-1">
+                <span className="block font-bold text-sm">
+                  Trusted Contacts
+                </span>
+
+                <span className="block text-xs text-slate-500 mt-1">
+                  Manage your trusted circle
+                </span>
+              </span>
+
+              <ChevronRight
+                size={18}
+                className="text-slate-400"
+              />
             </button>
 
-            {/* Real Voice & Video Calling */}
+            {/* Calling */}
             <button
               type="button"
-              className="bg-indigo-50 hover:bg-indigo-100 p-4 rounded-lg transition text-center"
               onClick={() => navigate('/real-calling')}
+              className="bg-white border border-slate-200 hover:border-teal-300 hover:shadow-md rounded-2xl p-5 flex items-center gap-4 text-left transition"
             >
-              <svg
-                className="w-8 h-8 mx-auto mb-2 text-indigo-600"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth={2}
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                viewBox="0 0 24 24"
-              >
-                <rect x="3" y="5" width="13" height="14" rx="2" />
-                <path d="m16 10 5-3v10l-5-3" />
-              </svg>
-              <p className="text-sm font-medium text-gray-700">
-                Voice & Video Call
-              </p>
+              <span className="w-12 h-12 bg-sky-50 rounded-xl flex items-center justify-center text-sky-700">
+                <Phone size={23} />
+              </span>
+
+              <span className="flex-1">
+                <span className="block font-bold text-sm">
+                  Voice & Video Calls
+                </span>
+
+                <span className="block text-xs text-slate-500 mt-1">
+                  Open real calling center
+                </span>
+              </span>
+
+              <ChevronRight
+                size={18}
+                className="text-slate-400"
+              />
             </button>
 
-            {/* Fake Call */}
+            {/* History */}
             <button
               type="button"
-              className="bg-pink-50 hover:bg-pink-100 p-4 rounded-lg transition text-center"
-              onClick={() => navigate('/fake-call')}
+              onClick={() => navigate('/history')}
+              className="bg-white border border-slate-200 hover:border-teal-300 hover:shadow-md rounded-2xl p-5 flex items-center gap-4 text-left transition"
             >
-              <svg
-                className="w-8 h-8 mx-auto mb-2 text-pink-600"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M22 16.92v3a2 2 0 01-2.18 2A19.79 19.79 0 013 5.18 2 2 0 015 3h3a2 2 0 012 1.72c.12.96.35 1.9.69 2.79a2 2 0 01-.45 2.11L9 10.87a16 16 0 006.13 6.13l1.25-1.24a2 2 0 012.11-.45c.89.34 1.83.57 2.79.69A2 2 0 0122 16.92z"
-                />
-              </svg>
-              <p className="text-sm font-medium text-gray-700">
-                Fake Call
-              </p>
+              <span className="w-12 h-12 bg-violet-50 rounded-xl flex items-center justify-center text-violet-700">
+                <Clock3 size={23} />
+              </span>
+
+              <span className="flex-1">
+                <span className="block font-bold text-sm">
+                  Safety History
+                </span>
+
+                <span className="block text-xs text-slate-500 mt-1">
+                  View your session records
+                </span>
+              </span>
+
+              <ChevronRight
+                size={18}
+                className="text-slate-400"
+              />
             </button>
 
-            {/* Settings */}
-            <button
-              className="bg-gray-50 hover:bg-gray-100 p-4 rounded-lg transition text-center"
-              onClick={() => alert('Settings coming soon!')}
-            >
-              <svg className="w-8 h-8 mx-auto mb-2 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-              </svg>
-              <p className="text-sm font-medium text-gray-700">Settings</p>
-            </button>
-
-            {/* Profile */}
-            <button
-              className="bg-green-50 hover:bg-green-100 p-4 rounded-lg transition text-center"
-              onClick={() => navigate('/profile')}
-            >
-              <svg className="w-8 h-8 mx-auto mb-2 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
-              </svg>
-              <p className="text-sm font-medium text-gray-700">Profile</p>
-            </button>
           </div>
-        </div>
-      </div>
+        </section>
+
+        <footer className="text-center text-xs text-slate-400 py-5">
+          Spheriva — Your Safety, Your Control.
+        </footer>
+
+      </main>
     </div>
   );
 };
