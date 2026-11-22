@@ -1,6 +1,12 @@
 import React from 'react';
-import { NavLink, Outlet } from 'react-router-dom';
 
+import {
+  NavLink,
+  Outlet,
+  useLocation,
+} from 'react-router-dom';
+
+// Navigation for existing application screens
 const tabs = [
   {
     to: '/home',
@@ -19,35 +25,68 @@ const tabs = [
   },
 ];
 
-const AppLayout = () => (
-  <div className="min-h-screen bg-gray-100 pb-20">
-    <Outlet />
+export default function AppLayout() {
+  const location = useLocation();
 
-    <nav
-      className="fixed bottom-0 inset-x-0 bg-white border-t border-gray-200 shadow-lg"
-      style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
-      aria-label="Main navigation"
+  // These pages have their own navigation.
+  // Hide bottom tabs to prevent duplicate navigation.
+  const isProfessionalDashboard = [
+    '/home',
+    '/dashboard-preview',
+    '/home-old',
+  ].includes(location.pathname);
+
+  return (
+    <div
+      className={`min-h-screen bg-gray-100 ${
+        isProfessionalDashboard ? '' : 'pb-20'
+      }`}
     >
-      <div className="flex">
-        {tabs.map((tab) => (
-          <NavLink
-            key={tab.to}
-            to={tab.to}
-            className={({ isActive }) =>
-              `flex-1 flex flex-col items-center py-2 text-xs font-medium transition ${
-                isActive ? 'text-blue-600' : 'text-gray-500 hover:text-gray-700'
-              }`
-            }
-          >
-            <svg className="w-6 h-6 mb-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d={tab.icon} />
-            </svg>
-            {tab.label}
-          </NavLink>
-        ))}
-      </div>
-    </nav>
-  </div>
-);
+      {/* Render selected screen */}
+      <Outlet />
 
-export default AppLayout;
+      {/* Show bottom tabs on other screens only */}
+      {!isProfessionalDashboard && (
+        <nav
+          className="fixed bottom-0 inset-x-0 z-40 bg-white border-t border-gray-200 shadow-lg"
+          style={{
+            paddingBottom: 'env(safe-area-inset-bottom)',
+          }}
+          aria-label="Main navigation"
+        >
+          <div className="flex">
+            {tabs.map((tab) => (
+              <NavLink
+                key={tab.to}
+                to={tab.to}
+                className={({ isActive }) =>
+                  `flex-1 flex flex-col items-center py-2 text-xs font-medium transition ${
+                    isActive
+                      ? 'text-blue-600'
+                      : 'text-gray-500 hover:text-gray-700'
+                  }`
+                }
+              >
+                <svg
+                  className="w-6 h-6 mb-0.5"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d={tab.icon}
+                  />
+                </svg>
+
+                {tab.label}
+              </NavLink>
+            ))}
+          </div>
+        </nav>
+      )}
+    </div>
+  );
+}
