@@ -1,3 +1,4 @@
+import '../styles/secondary-ui.css';
 
 import React, {
   useCallback,
@@ -254,7 +255,7 @@ export default function RealCallRoom({
     <StreamVideo client={client}>
       <StreamCall call={call}>
         <StreamTheme>
-          <div className="min-h-screen bg-slate-950 text-white flex flex-col">
+          <div className="sph-real-room min-h-screen bg-slate-950 text-white flex flex-col">
 
             <header className="px-5 py-5 bg-slate-900">
 
