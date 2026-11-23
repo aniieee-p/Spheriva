@@ -1,5 +1,5 @@
 import '../styles/secondary-ui.css';
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import AnimatedFakeCaller from '../components/AnimatedFakeCaller';
 
@@ -13,6 +13,30 @@ export default function ActiveFakeCallScreen() {
   const [seconds, setSeconds] = useState(0);
   const [muted, setMuted] = useState(false);
   const [cameraOn, setCameraOn] = useState(true);
+
+
+  const audioRef = useRef(null);
+
+useEffect(() => {
+  // Recording sirf Fake Voice Call mein play hogi
+  if (callType !== 'voice') return;
+
+  const audio = new Audio('/audio/friend_call_01.m4a');
+  audioRef.current = audio;
+
+  audio.preload = 'auto';
+  audio.loop = false;
+
+  audio.play().catch((error) => {
+    console.error('Fake call audio playback failed:', error);
+  });
+
+  return () => {
+    audio.pause();
+    audio.currentTime = 0;
+    audioRef.current = null;
+  };
+}, [callType]);
 
   useEffect(() => {
     const timer = setInterval(() => {
@@ -106,7 +130,14 @@ export default function ActiveFakeCallScreen() {
         <div className="flex flex-col items-center gap-2">
           <button
             type="button"
-            onClick={() => navigate('/fake-call', { replace: true })}
+            onClick={() => {
+              if (audioRef.current) {
+                audioRef.current.pause();
+                audioRef.current.currentTime = 0;
+              }
+            
+              navigate('/fake-call', { replace: true });
+            }}
             className="w-16 h-16 rounded-full bg-red-600 hover:bg-red-700 text-white flex items-center justify-center transition"
             aria-label="End fake call"
           >
